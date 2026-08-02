@@ -1,7 +1,7 @@
 
 from sqlalchemy import create_engine
 
-from config import *
+from backend.config import *
 
 
 
