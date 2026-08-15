@@ -1,7 +1,6 @@
 from sqlalchemy import text
 from backend.database import engine
-from sqlalchemy import text
-from backend.database import engine
+
 
 
 

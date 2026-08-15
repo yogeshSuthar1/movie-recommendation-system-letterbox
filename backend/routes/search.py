@@ -20,12 +20,7 @@ def search():
             "error": "Search query is required"
         }), 400
 
-    # Perform search
-    results = search_movies(query)
-
     # Save search history
-    user_id = g.user_id
-
     with engine.begin() as conn:
 
         conn.execute(
@@ -36,12 +31,15 @@ def search():
                     (:user_id, :search_query)
             """),
             {
-                "user_id": user_id,
+                "user_id": g.user_id,
                 "search_query": query
             }
         )
 
-    return jsonify(results), 200
+    # Search movies
+    result = search_movies(query)
+
+    return jsonify(result)
 
 @search_bp.route("/search/history", methods=["GET"])
 @token_required

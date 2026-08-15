@@ -98,20 +98,36 @@ def get_reviews(movie_id):
         reviews = conn.execute(
             text("""
                 SELECT
-                    r.review_id,
-                    r.user_id,
-                    u.username,
-                    r.review_text,
-                    r.likes,
-                    r.created_at
-                FROM reviews r
-                JOIN users u
-                    ON r.user_id = u.user_id
-                WHERE r.movie_id = :movie_id
-                ORDER BY r.created_at DESC
-            """),
-            {"movie_id": movie_id}
-        ).mappings().all()
+                r.review_id,
+                r.user_id,
+                u.username,
+                r.review_text,
+                r.likes,
+                r.created_at,
+
+                CASE
+                    WHEN rl.user_id IS NOT NULL THEN TRUE
+                    ELSE FALSE
+                END AS is_liked
+
+            FROM reviews r
+
+            JOIN users u
+                ON r.user_id = u.user_id
+
+            LEFT JOIN review_likes rl
+                ON r.review_id = rl.review_id
+                AND rl.user_id = :user_id
+
+            WHERE r.movie_id = :movie_id
+
+            ORDER BY r.created_at DESC
+        """),
+        {
+            "movie_id": movie_id,
+            "user_id": g.user_id
+        }
+    ).mappings().all()
 
     review_list = [dict(review) for review in reviews]
 
@@ -229,3 +245,173 @@ def delete_review(review_id):
         "message": "Review deleted successfully",
         "review_id": review_id
     }), 200
+
+@review_bp.route("/reviews/<int:review_id>/like", methods=["POST"])
+@token_required
+def like_review(review_id):
+
+    user_id = g.user_id
+
+    with engine.begin() as conn:
+
+        # Check review exists
+        review = conn.execute(
+            text("""
+                SELECT review_id
+                FROM reviews
+                WHERE review_id = :review_id
+            """),
+            {
+                "review_id": review_id
+            }
+        ).first()
+
+        if review is None:
+            return jsonify({
+                "error": "Review not found"
+            }), 404
+
+        # Check if already liked
+        existing_like = conn.execute(
+            text("""
+                SELECT review_id
+                FROM review_likes
+                WHERE review_id = :review_id
+                AND user_id = :user_id
+            """),
+            {
+                "review_id": review_id,
+                "user_id": user_id
+            }
+        ).first()
+
+        if existing_like:
+            return jsonify({
+                "error": "Review already liked"
+            }), 409
+
+        # Add like
+        conn.execute(
+            text("""
+                INSERT INTO review_likes
+                    (review_id, user_id)
+                VALUES
+                    (:review_id, :user_id)
+            """),
+            {
+                "review_id": review_id,
+                "user_id": user_id
+            }
+        )
+
+        # Update likes count
+        conn.execute(
+            text("""
+                UPDATE reviews
+                SET likes = likes + 1
+                WHERE review_id = :review_id
+            """),
+            {
+                "review_id": review_id
+            }
+        )
+
+    return jsonify({
+        "message": "Review liked successfully",
+        "review_id": review_id
+    }), 200
+
+
+@review_bp.route("/reviews/<int:review_id>/like", methods=["DELETE"])
+@token_required
+def unlike_review(review_id):
+
+    user_id = g.user_id
+
+    with engine.begin() as conn:
+
+        # Check if like exists
+        existing_like = conn.execute(
+            text("""
+                SELECT review_id
+                FROM review_likes
+                WHERE review_id = :review_id
+                AND user_id = :user_id
+            """),
+            {
+                "review_id": review_id,
+                "user_id": user_id
+            }
+        ).first()
+
+        if existing_like is None:
+            return jsonify({
+                "error": "Review is not liked"
+            }), 404
+
+        # Remove like
+        conn.execute(
+            text("""
+                DELETE FROM review_likes
+                WHERE review_id = :review_id
+                AND user_id = :user_id
+            """),
+            {
+                "review_id": review_id,
+                "user_id": user_id
+            }
+        )
+
+        # Decrease likes count
+        conn.execute(
+            text("""
+                UPDATE reviews
+                SET likes = GREATEST(likes - 1, 0)
+                WHERE review_id = :review_id
+            """),
+            {
+                "review_id": review_id
+            }
+        )
+
+    return jsonify({
+        "message": "Review unliked successfully",
+        "review_id": review_id
+    }), 200
+
+
+@review_bp.route("/review/<int:review_id>", methods=["GET"])
+@token_required
+def get_single_review(review_id):
+
+    with engine.connect() as conn:
+
+        review = conn.execute(
+            text("""
+                SELECT
+                    r.review_id,
+                    r.user_id,
+                    u.username,
+                    r.movie_id,
+                    m.title,
+                    r.review_text,
+                    r.likes,
+                    r.created_at
+                FROM reviews r
+                JOIN users u
+                    ON r.user_id = u.user_id
+                JOIN movies m
+                    ON r.movie_id = m.movie_id
+                WHERE r.review_id = :review_id
+            """),
+            {
+                "review_id": review_id
+            }
+        ).mappings().first()
+
+    if review is None:
+        return jsonify({
+            "error": "Review not found"
+        }), 404
+
+    return jsonify(dict(review)), 200

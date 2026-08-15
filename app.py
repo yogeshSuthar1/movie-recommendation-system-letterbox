@@ -7,6 +7,7 @@ from backend.routes.auth import auth_bp
 from backend.routes.watchlist import watchlist_bp
 from backend.routes.rating import rating_bp
 from backend.routes.review import review_bp
+from backend.routes.profile import profile_bp
 
 app = Flask(__name__)
 
@@ -18,6 +19,7 @@ app.register_blueprint(auth_bp)
 app.register_blueprint(watchlist_bp)
 app.register_blueprint(rating_bp)
 app.register_blueprint(review_bp)
+app.register_blueprint(profile_bp)
 
 @app.route("/")
 def home():

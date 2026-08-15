@@ -150,12 +150,125 @@ def login():
     }), 200
 
 
-@auth_bp.route("/profile", methods=["GET"])
+@auth_bp.route("/change-password", methods=["PUT"])
 @token_required
-def profile():
+def change_password():
+
+    user_id = g.user_id
+
+    data = request.get_json()
+
+    if not data:
+        return jsonify({
+            "error": "Request body is required"
+        }), 400
+
+    current_password = data.get("current_password")
+    new_password = data.get("new_password")
+
+    if not current_password or not new_password:
+        return jsonify({
+            "error": "Current password and new password are required"
+        }), 400
+
+    if len(new_password) < 6:
+        return jsonify({
+            "error": "New password must be at least 6 characters"
+        }), 400
+
+    # Get current password
+    with engine.connect() as conn:
+
+        user = conn.execute(
+            text("""
+                SELECT password_hash
+                FROM users
+                WHERE user_id = :user_id
+            """),
+            {
+                "user_id": user_id
+            }
+        ).first()
+
+    if user is None:
+        return jsonify({
+            "error": "User not found"
+        }), 404
+
+    # Verify current password
+    if not bcrypt.checkpw(
+        current_password.encode("utf-8"),
+        user.password_hash.encode("utf-8")
+    ):
+        return jsonify({
+            "error": "Current password is incorrect"
+        }), 401
+
+    # Hash new password
+    new_password_hash = bcrypt.hashpw(
+        new_password.encode("utf-8"),
+        bcrypt.gensalt()
+    ).decode("utf-8")
+
+    # Update password
+    with engine.begin() as conn:
+
+        conn.execute(
+            text("""
+                UPDATE users
+                SET password_hash = :password_hash
+                WHERE user_id = :user_id
+            """),
+            {
+                "password_hash": new_password_hash,
+                "user_id": user_id
+            }
+        )
 
     return jsonify({
-        "message": "You are authenticated",
-        "user_id": g.user_id,
-        "email": g.user_email
-    })
+        "message": "Password changed successfully"
+    }), 200
+
+
+@auth_bp.route("/reset-password", methods=["PUT"])
+@token_required
+def reset_password():
+
+    user_id = g.user_id
+
+    data = request.get_json()
+
+    if not data or not data.get("new_password"):
+        return jsonify({
+            "error": "New password is required"
+        }), 400
+
+    new_password = data["new_password"]
+
+    if len(new_password) < 6:
+        return jsonify({
+            "error": "Password must be at least 6 characters"
+        }), 400
+
+    password_hash = bcrypt.hashpw(
+        new_password.encode("utf-8"),
+        bcrypt.gensalt()
+    ).decode("utf-8")
+
+    with engine.begin() as conn:
+
+        conn.execute(
+            text("""
+                UPDATE users
+                SET password_hash = :password_hash
+                WHERE user_id = :user_id
+            """),
+            {
+                "password_hash": password_hash,
+                "user_id": user_id
+            }
+        )
+
+    return jsonify({
+        "message": "Password reset successfully"
+    }), 200
