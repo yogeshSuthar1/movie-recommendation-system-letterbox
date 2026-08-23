@@ -1,0 +1,169 @@
+.poster-area {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  background: #050507;
+}
+
+
+/* =========================
+   POSTER COLUMNS
+========================= */
+
+.poster-columns {
+  position: absolute;
+
+  top: -20%;
+  left: -8%;
+
+  width: 116%;
+  height: 140%;
+
+  display: flex;
+  gap: 14px;
+
+  transform: rotate(-6deg) scale(1.08);
+}
+
+
+/* =========================
+   INDIVIDUAL COLUMN
+========================= */
+
+.poster-column {
+  flex: 1;
+
+  display: flex;
+  flex-direction: column;
+
+  gap: 14px;
+
+  min-width: 0;
+}
+
+
+/* =========================
+   MOVIE POSTERS
+========================= */
+
+.movie-poster {
+  width: 100%;
+
+  aspect-ratio: 2 / 3;
+
+  object-fit: cover;
+
+  display: block;
+
+  border-radius: 7px;
+
+  opacity: 1;
+
+  flex-shrink: 0;
+
+  user-select: none;
+  pointer-events: none;
+}
+
+
+/* =========================
+   MOVEMENT
+========================= */
+
+.move-up {
+  animation: moveUp 12s linear infinite;
+}
+
+.move-down {
+  animation: moveDown 15s linear infinite;
+}
+
+
+/* =========================
+   UP ANIMATION
+========================= */
+
+@keyframes moveUp {
+
+  from {
+    transform: translateY(0);
+  }
+
+  to {
+    transform: translateY(-25%);
+  }
+
+}
+
+
+/* =========================
+   DOWN ANIMATION
+========================= */
+
+@keyframes moveDown {
+
+  from {
+    transform: translateY(-25%);
+  }
+
+  to {
+    transform: translateY(0);
+  }
+
+}
+
+
+/* =========================
+   DARK OVERLAY
+========================= */
+
+.poster-overlay {
+
+  position: absolute;
+
+  inset: 0;
+
+  z-index: 5;
+
+  pointer-events: none;
+
+  background: linear-gradient(
+    90deg,
+    rgba(5, 5, 7, 0.20) 0%,
+    rgba(5, 5, 7, 0.35) 45%,
+    rgba(5, 5, 7, 0.96) 100%
+  );
+
+}
+
+
+/* =========================
+   MOVIEVERSE LOGO
+========================= */
+
+.movieverse-logo {
+
+  position: absolute;
+
+  z-index: 10;
+
+  top: 50%;
+  left: 50%;
+
+  transform: translate(-50%, -50%);
+
+  color: white;
+
+  font-size: 34px;
+
+  font-weight: 700;
+
+  letter-spacing: 2px;
+
+  text-shadow:
+    0 0 10px rgba(255, 255, 255, 0.35),
+    0 0 25px rgba(140, 80, 255, 0.45);
+
+  white-space: nowrap;
+
+}

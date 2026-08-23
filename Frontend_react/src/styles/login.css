@@ -1,0 +1,560 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  background: #050507;
+  font-family: Arial, Helvetica, sans-serif;
+
+}
+
+
+/* =========================
+   MAIN LOGIN PAGE
+========================= */
+
+.login-page {
+  width: 100vw;
+  height: 100vh;
+
+  display: flex;
+
+  background:
+    radial-gradient(
+      circle at 40% 50%,
+      rgba(112, 38, 190, 0.12),
+      transparent 45%
+    ),
+    #050507;
+}
+
+
+/* =========================
+   LEFT SIDE
+========================= */
+
+.login-left {
+  width: 53%;
+  height: 100vh;
+
+  position: relative;
+
+  overflow: hidden;
+}
+
+
+/* =========================
+   POSTER AREA
+========================= */
+
+.poster-area {
+  width: 100%;
+  height: 100%;
+
+  position: relative;
+
+  overflow: hidden;
+}
+
+
+/* Poster columns container */
+
+.poster-columns {
+  position: absolute;
+
+  width: 120%;
+  height: 125%;
+
+  left: -8%;
+  top: -12%;
+
+  display: flex;
+
+  gap: 18px;
+
+  transform: rotate(-4deg);
+}
+
+
+/* Individual column */
+
+.poster-column {
+  width: 24%;
+
+  display: flex;
+  flex-direction: column;
+
+  gap: 18px;
+
+  flex-shrink: 0;
+}
+
+
+/* Posters */
+
+.movie-poster {
+  width: 100%;
+
+  aspect-ratio: 0.67;
+
+  object-fit: cover;
+
+  border-radius: 12px;
+
+  display: block;
+
+  box-shadow:
+    0 0 18px rgba(120, 45, 220, 0.15);
+
+  filter: brightness(0.62);
+
+  flex-shrink: 0;
+}
+
+
+/* =========================
+   ANIMATIONS
+========================= */
+
+.move-up {
+  animation: moveUp 28s linear infinite;
+}
+
+.move-down {
+  animation: moveDown 32s linear infinite;
+}
+
+
+@keyframes moveUp {
+
+  from {
+    transform: translateY(0);
+  }
+
+  to {
+    transform: translateY(-33.333%);
+  }
+
+}
+
+
+@keyframes moveDown {
+
+  from {
+    transform: translateY(-33.333%);
+  }
+
+  to {
+    transform: translateY(0);
+  }
+
+}
+
+
+/* =========================
+   POSTER DARK OVERLAY
+========================= */
+
+.poster-overlay {
+  position: absolute;
+
+  inset: 0;
+
+  background:
+    linear-gradient(
+      90deg,
+      rgba(5, 5, 7, 0.15),
+      rgba(5, 5, 7, 0.05) 45%,
+      rgba(5, 5, 7, 0.75)
+    );
+
+  pointer-events: none;
+}
+
+
+/* Purple glow */
+
+.poster-area::after {
+
+  content: "";
+
+  position: absolute;
+
+  width: 420px;
+  height: 420px;
+
+  left: 38%;
+  top: 45%;
+
+  transform: translate(-50%, -50%);
+
+  background: rgba(123, 45, 220, 0.16);
+
+  filter: blur(120px);
+
+  pointer-events: none;
+}
+
+
+/* =========================
+   MOVIEVERSE CENTER LOGO
+========================= */
+
+.movieverse-logo {
+
+  position: absolute;
+
+  left: 50%;
+  top: 50%;
+
+  transform: translate(-50%, -50%);
+
+  z-index: 10;
+
+  padding: 12px 26px;
+
+  border-radius: 10px;
+
+  color: white;
+
+  font-size: 27px;
+
+  font-weight: 700;
+
+  letter-spacing: 0.3px;
+
+  background: rgba(10, 7, 18, 0.82);
+
+  border: 1px solid rgba(160, 70, 255, 0.65);
+
+  box-shadow:
+    0 0 15px rgba(145, 55, 255, 0.7),
+    0 0 35px rgba(145, 55, 255, 0.25);
+
+}
+
+
+/* =========================
+   RIGHT SIDE
+========================= */
+
+.login-right {
+
+  width: 47%;
+  height: 100vh;
+
+  display: flex;
+
+  align-items: center;
+
+  justify-content: center;
+
+  padding: 50px;
+}
+
+
+/* =========================
+   LOGIN CARD
+========================= */
+
+.login-card {
+
+  width: 430px;
+
+  padding: 40px;
+
+  border-radius: 20px;
+
+  background:
+    rgba(20, 16, 29, 0.72);
+
+  border: 1px solid rgba(150, 75, 230, 0.28);
+
+  box-shadow:
+    0 0 30px rgba(112, 38, 190, 0.12);
+
+  backdrop-filter: blur(18px);
+
+}
+
+
+/* Heading */
+
+.login-card h1 {
+
+  color: white;
+
+  font-size: 34px;
+
+  margin-bottom: 8px;
+
+}
+
+
+/* Subtitle */
+
+.login-subtitle {
+
+  color: #aaa4b5;
+
+  font-size: 15px;
+
+  margin-bottom: 32px;
+
+}
+
+
+/* =========================
+   INPUT
+========================= */
+
+.input-group {
+
+  margin-bottom: 20px;
+
+}
+
+
+.input-group label {
+
+  display: block;
+
+  color: #ddd7e5;
+
+  font-size: 14px;
+
+  margin-bottom: 8px;
+
+}
+
+
+.input-wrapper {
+
+  height: 52px;
+
+  display: flex;
+
+  align-items: center;
+
+  position: relative;
+
+  border-radius: 10px;
+
+  border: 1px solid rgba(170, 160, 185, 0.18);
+
+  background: rgba(255, 255, 255, 0.045);
+
+}
+
+
+.input-icon {
+
+  margin-left: 16px;
+
+  margin-right: 10px;
+
+  color: #8d8797;
+
+  font-size: 16px;
+
+}
+
+
+.input-wrapper input {
+
+  width: 100%;
+
+  height: 100%;
+
+  border: none;
+
+  outline: none;
+
+  background: transparent;
+
+  color: white;
+
+  font-size: 15px;
+
+  padding-right: 45px;
+
+}
+
+
+.input-wrapper input::placeholder {
+
+  color: #777180;
+
+}
+
+
+/* Password eye */
+
+.eye-button {
+
+  position: absolute;
+
+  right: 14px;
+
+  top: 50%;
+
+  transform: translateY(-50%);
+
+  border: none;
+
+  background: transparent;
+
+  color: #aaa4b5;
+
+  cursor: pointer;
+
+  font-size: 17px;
+
+}
+
+
+/* =========================
+   LOGIN BUTTON
+========================= */
+
+.login-button {
+
+  width: 100%;
+
+  height: 52px;
+
+  margin-top: 8px;
+
+  border: none;
+
+  border-radius: 10px;
+
+  color: white;
+
+  font-size: 16px;
+
+  font-weight: 600;
+
+  cursor: pointer;
+
+  background:
+    linear-gradient(
+      90deg,
+      #7624df,
+      #9b4df5
+    );
+
+  box-shadow:
+    0 8px 25px rgba(130, 40, 230, 0.25);
+
+  transition: 0.25s ease;
+
+}
+
+
+.login-button:hover {
+
+  transform: translateY(-2px);
+
+  box-shadow:
+    0 10px 30px rgba(140, 45, 240, 0.4);
+
+}
+
+
+/* =========================
+   SIGN UP
+========================= */
+
+.signup-text {
+
+  margin-top: 24px;
+
+  text-align: center;
+
+  font-size: 14px;
+
+  color: #8f8999;
+
+}
+
+
+.signup-text a {
+
+  margin-left: 5px;
+
+  color: #a45cff;
+
+  font-weight: 600;
+
+  text-decoration: none;
+
+}
+
+
+.signup-text a:hover {
+
+  color: #c08cff;
+
+  text-decoration: underline;
+
+}
+
+
+/* =========================
+   RESPONSIVE
+========================= */
+
+@media (max-width: 900px) {
+
+  .login-left {
+    width: 45%;
+  }
+
+  .login-right {
+    width: 55%;
+    padding: 25px;
+  }
+
+  .login-card {
+    width: 100%;
+  }
+
+}
+
+
+@media (max-width: 700px) {
+
+  body {
+    overflow: auto;
+  }
+
+  .login-page {
+    height: auto;
+    min-height: 100vh;
+  }
+
+  .login-left {
+    display: none;
+  }
+
+  .login-right {
+    width: 100%;
+    min-height: 100vh;
+  }
+
+    .login-error {
+    color: #ff6b8a;
+    font-size: 13px;
+    margin-top: -8px;
+    margin-bottom: 15px;
+    }
+
+    .login-button:disabled {
+    opacity: 0.7;
+    cursor: not-allowed;
+}
+
+}
