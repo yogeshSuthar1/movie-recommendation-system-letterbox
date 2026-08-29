@@ -1,7 +1,11 @@
 import React from "react";
 import Signup from "./pages/Signup";
 import GenreSelection from "./pages/GenreSelection";
-import Home from "./pages/Home";
+import Home from "./pages/home";
+import MovieDetail from './pages/MovieDetail';
+import Profile from './pages/profile';
+import MonthlyReview from './pages/MonthlyReview';
+import Watchlist from './pages/Watchlist';
 
 import {
   BrowserRouter,
@@ -38,6 +42,13 @@ function App() {
           path="/home"
           element={<Home />}
         />
+
+        <Route path="/movie" element={<MovieDetail />} />
+        <Route path="/movie/:id" element={<MovieDetail />} />
+        <Route path="/profile/:id" element={<Profile />} />
+        <Route path="/monthly-review" element={<MonthlyReview />} />
+        <Route path="/watchlist" element={<Watchlist />} />
+        
 
       </Routes>
 

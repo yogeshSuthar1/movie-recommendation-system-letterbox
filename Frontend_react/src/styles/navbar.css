@@ -1,0 +1,212 @@
+/* =========================================
+   GLOBAL NAVBAR & HEADER
+========================================= */
+.home-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 15px 50px;
+  background: #09090b;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  z-index: 99999;
+  pointer-events: auto !important;
+}
+
+.logo {
+  font-size: 26px;
+  font-weight: 800;
+  letter-spacing: 1.5px;
+  color: #ffffff;
+  text-decoration: none;
+}
+
+.logo span {
+  color: #9b5cff;
+}
+
+/* Right side actions wrapper */
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 25px;
+}
+
+/* Explore Link */
+.nav-action-link {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #fff;
+  text-decoration: none;
+  font-size: 15px;
+  font-weight: 500;
+  transition: opacity 0.2s;
+}
+
+.nav-action-link:hover {
+  opacity: 0.8;
+}
+
+/* Pure Icon Buttons */
+.icon-btn {
+  background: transparent;
+  border: none;
+  color: #8c8c8c;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.3s ease;
+  padding: 0;
+}
+
+.icon-btn:hover {
+  color: #ffffff;
+}
+
+/* Notification Badge */
+.notification {
+  position: relative;
+  text-decoration: none;
+}
+
+.badge {
+  position: absolute;
+  top: -6px;
+  right: -8px;
+  background: #e50914;
+  color: #fff;
+  font-size: 9px;
+  font-weight: bold;
+  padding: 2px 5px;
+  border-radius: 10px;
+  border: 2px solid #09090b;
+}
+
+/* Profile Menu Wrapper */
+.profile-menu-container {
+  position: relative;
+  display: inline-block;
+}
+
+.profile-circle {
+  width: 35px;
+  height: 35px;
+  background: #2a2a2a;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #a0a0a0;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.profile-circle:hover,
+.profile-circle.active {
+  background: #404040;
+  color: #ffffff;
+}
+
+/* =========================================
+   DROPDOWN MENU
+========================================= */
+.profile-dropdown-menu {
+  position: absolute;
+  top: calc(100% + 12px);
+  right: 0;
+  width: 220px;
+  background: #121216;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  padding: 8px;
+  box-shadow: 0 15px 35px rgba(0, 0, 0, 0.8);
+  z-index: 100000;
+}
+
+.dropdown-user-header {
+  padding: 8px 12px 6px 12px;
+}
+
+.user-greeting {
+  font-size: 11px;
+  color: #777;
+  margin: 0;
+  text-transform: uppercase;
+}
+
+.user-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: #fff;
+  margin: 2px 0 0 0;
+}
+
+.dropdown-divider {
+  height: 1px;
+  background: rgba(255, 255, 255, 0.08);
+  margin: 6px 0;
+}
+
+.dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 12px;
+  font-size: 13.5px;
+  color: #ccc;
+  text-decoration: none;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  text-align: left;
+  transition: 0.15s ease;
+}
+
+.dropdown-item:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+}
+
+.dropdown-item.logout-btn {
+  color: #ff5252;
+}
+
+.dropdown-item.logout-btn:hover {
+  background: rgba(255, 82, 82, 0.15);
+  color: #ff5252;
+}
+
+/* Navbar ko absolute top layer par laane ke liye */
+.home-header {
+  z-index: 2147483647 !important; /* Max possible z-index in CSS */
+  pointer-events: auto !important;
+}
+
+.header-actions {
+  pointer-events: auto !important;
+  z-index: 2147483647 !important;
+}
+
+.profile-menu-container {
+  position: relative !important;
+  z-index: 2147483647 !important;
+  pointer-events: auto !important;
+}
+
+.profile-circle {
+  position: relative !important;
+  z-index: 2147483647 !important;
+  pointer-events: auto !important;
+}
+
+.profile-dropdown-menu {
+  z-index: 2147483648 !important; /* Button se bhi ek step upar */
+  pointer-events: auto !important;
+}

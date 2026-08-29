@@ -1,0 +1,165 @@
+.monthly-review-page {
+  min-height: 100vh;
+  background: #050507;
+  color: #fff;
+  padding-top: 100px; /* Navbar space */
+}
+
+.calendar-container {
+  max-width: 1300px;
+  margin: 0 auto;
+  padding: 20px 4%;
+  animation: fadeIn 0.5s ease;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* HEADER NAV */
+.calendar-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 40px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  padding-bottom: 20px;
+}
+
+.cal-nav {
+  display: flex;
+  align-items: center;
+  gap: 30px;
+}
+
+.cal-title {
+  font-size: 32px;
+  font-weight: 800;
+  margin: 0;
+  letter-spacing: 1px;
+}
+.cal-title span {
+  color: #9b5cff;
+}
+
+.cal-btn {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: #fff;
+  padding: 8px 16px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 600;
+  transition: 0.3s ease;
+}
+.cal-btn:hover {
+  background: rgba(155, 92, 255, 0.2);
+  border-color: #9b5cff;
+  transform: translateY(-2px);
+}
+
+.cal-stats {
+  font-size: 16px;
+  color: #aaa;
+}
+.cal-stats strong {
+  color: #fff;
+  font-size: 20px;
+}
+
+/* GRID LAYOUT */
+.calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 12px;
+}
+
+.day-name {
+  text-align: right;
+  padding-right: 10px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #666;
+  text-transform: uppercase;
+  margin-bottom: 5px;
+}
+
+/* CALENDAR CELLS */
+.calendar-cell {
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  border-radius: 12px;
+  min-height: 140px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+  position: relative;
+  overflow: hidden;
+}
+
+.calendar-cell.empty {
+  background: transparent;
+  border-color: transparent;
+}
+
+/* THE HOVER MAGIC */
+.calendar-cell:not(.empty):hover {
+  background: rgba(155, 92, 255, 0.05);
+  border-color: rgba(155, 92, 255, 0.4);
+  transform: translateY(-4px) scale(1.02);
+  box-shadow: 0 10px 25px rgba(155, 92, 255, 0.15);
+  z-index: 10;
+}
+
+.date-number {
+  font-size: 16px;
+  font-weight: 800;
+  color: #444;
+  margin-bottom: 12px;
+  align-self: flex-end;
+  transition: color 0.3s;
+}
+
+.calendar-cell:hover .date-number {
+  color: #9b5cff;
+}
+
+.is-today {
+  border-color: rgba(29, 185, 84, 0.3);
+  background: rgba(29, 185, 84, 0.03);
+}
+.is-today .date-number {
+  color: #1db954;
+}
+
+/* MOVIE TAGS */
+.cell-reviews {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.movie-tag {
+  background: rgba(255, 255, 255, 0.05);
+  border-left: 3px solid #777; /* Default, gets overridden in JSX */
+  color: #ddd;
+  text-decoration: none;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 6px 8px;
+  border-radius: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: all 0.2s ease;
+  cursor: pointer;
+}
+
+.movie-tag:hover {
+  transform: translateX(4px);
+  background: rgba(255, 255, 255, 0.15);
+  color: #fff;
+}

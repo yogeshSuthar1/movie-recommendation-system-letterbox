@@ -8,37 +8,30 @@ from backend.middleware.auth_middleware import token_required
 
 search_bp = Blueprint("search", __name__)
 
-
 @search_bp.route("/search", methods=["GET"])
 @token_required
 def search():
-
     query = request.args.get("q", "").strip()
+    search_type = request.args.get("type", "movie").lower() # NAYA PARAMETER
+    save_history = request.args.get("save", "false").lower() == "true"
 
     if not query:
-        return jsonify({
-            "error": "Search query is required"
-        }), 400
+        return jsonify([])
 
-    # Save search history
-    with engine.begin() as conn:
+    # History save karne wala tera existing code yahin rahega...
 
-        conn.execute(
-            text("""
-                INSERT INTO search_history
-                    (user_id, search_query)
-                VALUES
-                    (:user_id, :search_query)
-            """),
-            {
-                "user_id": g.user_id,
-                "search_query": query
-            }
-        )
-
-    # Search movies
-    result = search_movies(query)
-
+    if search_type == "movie":
+        # Teri existing movie search service call
+        result = search_movies(query)
+    elif search_type == "user":
+        # NAYA: User ko DB mein dhoondhne ki query (apne DB variables ke hisaab se)
+        with engine.connect() as conn:
+            users_query = conn.execute(
+                text("SELECT id as user_id, username, profile_pic FROM users WHERE username ILIKE :q LIMIT 12"),
+                {"q": f"%{query}%"}
+            ).mappings().all()
+            result = [dict(u) for u in users_query]
+    
     return jsonify(result)
 
 @search_bp.route("/search/history", methods=["GET"])

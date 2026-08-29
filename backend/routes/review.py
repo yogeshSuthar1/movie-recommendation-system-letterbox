@@ -8,10 +8,82 @@ from backend.middleware.auth_middleware import token_required
 review_bp = Blueprint("review", __name__)
 
 
-# Add review
+# Add or Update review (Smart Upsert)
 @review_bp.route("/reviews/<int:movie_id>", methods=["POST"])
 @token_required
 def add_review(movie_id):
+    user_id = g.user_id
+    data = request.get_json()
+
+    if not data or "review_text" not in data:
+        return jsonify({"error": "Review text is required"}), 400
+
+    review_text = data["review_text"].strip()
+    rating = data.get("rating", 0) 
+
+    if not review_text:
+        return jsonify({"error": "Review cannot be empty"}), 400
+
+    with engine.begin() as conn:
+        # 1. Check if movie exists
+        movie = conn.execute(
+            text("SELECT movie_id FROM movies WHERE movie_id = :movie_id"),
+            {"movie_id": movie_id}
+        ).first()
+
+        if not movie:
+            return jsonify({"error": "Movie not found"}), 404
+
+        # 2. 🌟 NAYA LOGIC: Check if user already reviewed this movie
+        existing_review = conn.execute(
+            text("""
+                SELECT review_id 
+                FROM reviews 
+                WHERE user_id = :user_id AND movie_id = :movie_id
+            """),
+            {"user_id": user_id, "movie_id": movie_id}
+        ).first()
+
+        if existing_review:
+            # 🔄 UPDATE EXISTING REVIEW (User kitni baar bhi post kare, yahi edit hoga)
+            review_id = existing_review.review_id
+            conn.execute(
+                text("""
+                    UPDATE reviews
+                    SET review_text = :review_text, rating = :rating
+                    WHERE review_id = :review_id
+                """),
+                {
+                    "review_text": review_text,
+                    "rating": rating,
+                    "review_id": review_id
+                }
+            )
+            message = "Review updated successfully"
+        else:
+            # 🆕 INSERT NEW REVIEW
+            result = conn.execute(
+                text("""
+                    INSERT INTO reviews (user_id, movie_id, review_text, rating) 
+                    VALUES (:user_id, :movie_id, :review_text, :rating)
+                """),
+                {
+                    "user_id": user_id,
+                    "movie_id": movie_id,
+                    "review_text": review_text,
+                    "rating": rating
+                }
+            )
+            review_id = result.lastrowid
+            message = "Review added successfully"
+
+    return jsonify({
+        "message": message,
+        "review_id": review_id,
+        "movie_id": movie_id,
+        "review_text": review_text,
+        "rating": rating
+    }), 200
 
     user_id = g.user_id
 
@@ -23,6 +95,8 @@ def add_review(movie_id):
         }), 400
 
     review_text = data["review_text"].strip()
+    # 🌟 NAYA: Frontend se rating receive kar rahe hain (default 0 agar nahi aayi)
+    rating = data.get("rating", 0) 
 
     if not review_text:
         return jsonify({
@@ -52,14 +126,15 @@ def add_review(movie_id):
         result = conn.execute(
             text("""
                 INSERT INTO reviews
-                    (user_id, movie_id, review_text)
+                    (user_id, movie_id, review_text, rating) 
                 VALUES
-                    (:user_id, :movie_id, :review_text)
+                    (:user_id, :movie_id, :review_text, :rating)
             """),
             {
                 "user_id": user_id,
                 "movie_id": movie_id,
-                "review_text": review_text
+                "review_text": review_text,
+                "rating": rating # 🌟 NAYA: Database mein rating save ho rahi hai
             }
         )
 
@@ -69,7 +144,8 @@ def add_review(movie_id):
         "message": "Review added successfully",
         "review_id": review_id,
         "movie_id": movie_id,
-        "review_text": review_text
+        "review_text": review_text,
+        "rating": rating # 🌟 NAYA: React ko wapas bhej rahe hain taaki instantly UI pe dikhe
     }), 201
 
 # Get reviews for a movie
@@ -102,6 +178,7 @@ def get_reviews(movie_id):
                 r.user_id,
                 u.username,
                 r.review_text,
+                r.rating, -- 🌟 NAYA: Database se rating nikal rahe hain
                 r.likes,
                 r.created_at,
 
@@ -110,24 +187,24 @@ def get_reviews(movie_id):
                     ELSE FALSE
                 END AS is_liked
 
-            FROM reviews r
+                FROM reviews r
 
-            JOIN users u
-                ON r.user_id = u.user_id
+                JOIN users u
+                    ON r.user_id = u.user_id
 
-            LEFT JOIN review_likes rl
-                ON r.review_id = rl.review_id
-                AND rl.user_id = :user_id
+                LEFT JOIN review_likes rl
+                    ON r.review_id = rl.review_id
+                    AND rl.user_id = :user_id
 
-            WHERE r.movie_id = :movie_id
+                WHERE r.movie_id = :movie_id
 
-            ORDER BY r.created_at DESC
-        """),
-        {
-            "movie_id": movie_id,
-            "user_id": g.user_id
-        }
-    ).mappings().all()
+                ORDER BY r.created_at DESC
+            """),
+            {
+                "movie_id": movie_id,
+                "user_id": g.user_id
+            }
+        ).mappings().all()
 
     review_list = [dict(review) for review in reviews]
 
@@ -154,6 +231,7 @@ def update_review(review_id):
         }), 400
 
     review_text = data["review_text"].strip()
+    rating = data.get("rating") # 🌟 NAYA: Agar edit karte waqt rating bhi change ki
 
     if not review_text:
         return jsonify({
@@ -181,19 +259,36 @@ def update_review(review_id):
                 "error": "Review not found or you are not allowed to edit it"
             }), 404
 
-        conn.execute(
-            text("""
-                UPDATE reviews
-                SET review_text = :review_text
-                WHERE review_id = :review_id
-                AND user_id = :user_id
-            """),
-            {
-                "review_text": review_text,
-                "review_id": review_id,
-                "user_id": user_id
-            }
-        )
+        # 🌟 NAYA: Update query mein rating check
+        if rating is not None:
+            conn.execute(
+                text("""
+                    UPDATE reviews
+                    SET review_text = :review_text, rating = :rating
+                    WHERE review_id = :review_id
+                    AND user_id = :user_id
+                """),
+                {
+                    "review_text": review_text,
+                    "rating": rating,
+                    "review_id": review_id,
+                    "user_id": user_id
+                }
+            )
+        else:
+            conn.execute(
+                text("""
+                    UPDATE reviews
+                    SET review_text = :review_text
+                    WHERE review_id = :review_id
+                    AND user_id = :user_id
+                """),
+                {
+                    "review_text": review_text,
+                    "review_id": review_id,
+                    "user_id": user_id
+                }
+            )
 
     return jsonify({
         "message": "Review updated successfully",
@@ -248,137 +343,61 @@ def delete_review(review_id):
 
 @review_bp.route("/reviews/<int:review_id>/like", methods=["POST"])
 @token_required
-def like_review(review_id):
-
+def toggle_like_review(review_id):
     user_id = g.user_id
 
-    with engine.begin() as conn:
+    try:
+        with engine.begin() as conn:
+            # 1. Check if review exists and get current likes
+            review = conn.execute(
+                text("SELECT review_id, likes FROM reviews WHERE review_id = :r"),
+                {"r": review_id}
+            ).first()
 
-        # Check review exists
-        review = conn.execute(
-            text("""
-                SELECT review_id
-                FROM reviews
-                WHERE review_id = :review_id
-            """),
-            {
-                "review_id": review_id
-            }
-        ).first()
+            if not review:
+                return jsonify({"error": "Review not found"}), 404
 
-        if review is None:
-            return jsonify({
-                "error": "Review not found"
-            }), 404
+            # 2. Check if user already liked it
+            existing_like = conn.execute(
+                text("SELECT review_id FROM review_likes WHERE review_id = :r AND user_id = :u"),
+                {"r": review_id, "u": user_id}
+            ).first()
 
-        # Check if already liked
-        existing_like = conn.execute(
-            text("""
-                SELECT review_id
-                FROM review_likes
-                WHERE review_id = :review_id
-                AND user_id = :user_id
-            """),
-            {
-                "review_id": review_id,
-                "user_id": user_id
-            }
-        ).first()
+            if existing_like:
+                # 🔴 UNLIKE LOGIC (Delete from review_likes, decrease count)
+                conn.execute(
+                    text("DELETE FROM review_likes WHERE review_id = :r AND user_id = :u"),
+                    {"r": review_id, "u": user_id}
+                )
+                conn.execute(
+                    text("UPDATE reviews SET likes = GREATEST(likes - 1, 0) WHERE review_id = :r"),
+                    {"r": review_id}
+                )
+                action = "unliked"
+                new_likes = max(0, review.likes - 1)
+            else:
+                # 🟢 LIKE LOGIC (Insert into review_likes, increase count)
+                conn.execute(
+                    text("INSERT INTO review_likes (review_id, user_id) VALUES (:r, :u)"),
+                    {"r": review_id, "u": user_id}
+                )
+                conn.execute(
+                    text("UPDATE reviews SET likes = likes + 1 WHERE review_id = :r"),
+                    {"r": review_id}
+                )
+                action = "liked"
+                new_likes = review.likes + 1
 
-        if existing_like:
-            return jsonify({
-                "error": "Review already liked"
-            }), 409
+        # Return real-time status and new count for React
+        return jsonify({
+            "message": f"Review {action} successfully",
+            "liked": action == "liked",
+            "likes_count": new_likes
+        }), 200
 
-        # Add like
-        conn.execute(
-            text("""
-                INSERT INTO review_likes
-                    (review_id, user_id)
-                VALUES
-                    (:review_id, :user_id)
-            """),
-            {
-                "review_id": review_id,
-                "user_id": user_id
-            }
-        )
-
-        # Update likes count
-        conn.execute(
-            text("""
-                UPDATE reviews
-                SET likes = likes + 1
-                WHERE review_id = :review_id
-            """),
-            {
-                "review_id": review_id
-            }
-        )
-
-    return jsonify({
-        "message": "Review liked successfully",
-        "review_id": review_id
-    }), 200
-
-
-@review_bp.route("/reviews/<int:review_id>/like", methods=["DELETE"])
-@token_required
-def unlike_review(review_id):
-
-    user_id = g.user_id
-
-    with engine.begin() as conn:
-
-        # Check if like exists
-        existing_like = conn.execute(
-            text("""
-                SELECT review_id
-                FROM review_likes
-                WHERE review_id = :review_id
-                AND user_id = :user_id
-            """),
-            {
-                "review_id": review_id,
-                "user_id": user_id
-            }
-        ).first()
-
-        if existing_like is None:
-            return jsonify({
-                "error": "Review is not liked"
-            }), 404
-
-        # Remove like
-        conn.execute(
-            text("""
-                DELETE FROM review_likes
-                WHERE review_id = :review_id
-                AND user_id = :user_id
-            """),
-            {
-                "review_id": review_id,
-                "user_id": user_id
-            }
-        )
-
-        # Decrease likes count
-        conn.execute(
-            text("""
-                UPDATE reviews
-                SET likes = GREATEST(likes - 1, 0)
-                WHERE review_id = :review_id
-            """),
-            {
-                "review_id": review_id
-            }
-        )
-
-    return jsonify({
-        "message": "Review unliked successfully",
-        "review_id": review_id
-    }), 200
-
+    except Exception as e:
+        print(f"LIKE TOGGLE ERROR: {e}")
+        return jsonify({"error": "Failed to toggle like"}), 500
 
 @review_bp.route("/review/<int:review_id>", methods=["GET"])
 @token_required
@@ -395,6 +414,7 @@ def get_single_review(review_id):
                     r.movie_id,
                     m.title,
                     r.review_text,
+                    r.rating, -- 🌟 NAYA: Yahan se bhi rating return kar di
                     r.likes,
                     r.created_at
                 FROM reviews r
@@ -415,3 +435,41 @@ def get_single_review(review_id):
         }), 404
 
     return jsonify(dict(review)), 200
+
+
+@review_bp.route("/profile/<int:target_user_id>", methods=["GET"])
+@token_required
+def get_user_profile(target_user_id):
+    with engine.connect() as conn:
+        # 1. User ki details nikalna
+        user_info = conn.execute(
+            text("""
+                SELECT user_id, username 
+                FROM users 
+                WHERE user_id = :u
+            """),
+            {"u": target_user_id}
+        ).mappings().first()
+
+        if not user_info:
+            return jsonify({"error": "User not found"}), 404
+
+        # 2. User ne jo movies review ki hain, unki list nikalna
+        user_reviews = conn.execute(
+            text("""
+                SELECT 
+                    r.review_id, r.movie_id, r.review_text, r.rating, r.likes, r.created_at,
+                    m.title, m.poster_url
+                FROM reviews r
+                JOIN movies m ON r.movie_id = m.movie_id
+                WHERE r.user_id = :u
+                ORDER BY r.created_at DESC
+            """),
+            {"u": target_user_id}
+        ).mappings().all()
+
+    return jsonify({
+        "user": dict(user_info),
+        "total_reviews": len(user_reviews),
+        "reviews": [dict(row) for row in user_reviews]
+    }), 200

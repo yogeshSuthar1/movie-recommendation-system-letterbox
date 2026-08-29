@@ -78,6 +78,7 @@ def get_watchlist():
                     m.release_year,
                     m.avg_rating,
                     m.poster_url,
+                    m.overview,   
                     w.added_at
                 FROM watchlist w
                 JOIN movies m

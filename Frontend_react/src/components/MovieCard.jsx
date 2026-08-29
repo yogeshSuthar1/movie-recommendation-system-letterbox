@@ -1,41 +1,27 @@
-import React from "react";
+import React from 'react';
+import { Link } from 'react-router-dom';
+// Agar is file ka koi CSS tha toh use yahan import rehne dena
 
 export default function MovieCard({ movie }) {
+  // Agar movie object empty hai toh kuch render mat karo
+  if (!movie) return null;
 
   return (
-    <div className="movie-card">
-
-      <div className="movie-poster-wrapper">
-
-        <img
-          src={movie.poster_url}
-          alt={movie.title}
-          className="movie-poster"
-          loading="lazy"
+    <Link 
+      to={`/movie/${movie.movie_id}`} 
+      style={{ textDecoration: 'none', color: 'inherit' }}
+    >
+      <div className="movie-card">
+        <img 
+          src={movie.poster_url} 
+          alt={movie.title} 
+          loading="lazy" 
         />
-
-      </div>
-
-      <div className="movie-info">
-
-        <h3>
-          {movie.title}
-        </h3>
-
-        <div className="movie-meta">
-
-          <span>
-            ⭐ {movie.avg_rating}
-          </span>
-
-          <span>
-            {movie.release_year}
-          </span>
-
+        <div className="movie-info">
+          <h4>{movie.title}</h4>
+          <span>⭐ {movie.avg_rating}</span>
         </div>
-
       </div>
-
-    </div>
+    </Link>
   );
 }

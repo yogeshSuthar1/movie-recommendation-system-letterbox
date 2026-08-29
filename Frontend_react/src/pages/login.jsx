@@ -52,7 +52,10 @@ export default function Login() {
       }
 
       // Save JWT token
+
       localStorage.setItem("token", data.token);
+      localStorage.setItem("user_id", data.user.user_id);      // Backend se aayi logged-in user ID
+      localStorage.setItem("username", data.user.username);
 
       // Save logged-in user
       localStorage.setItem(

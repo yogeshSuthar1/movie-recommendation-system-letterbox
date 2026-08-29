@@ -1,0 +1,180 @@
+.watchlist-page {
+  min-height: 100vh;
+  background: #050507;
+  color: #fff;
+  padding-top: 100px;
+}
+
+.wl-container {
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 40px 4%;
+}
+
+.wl-header h1 {
+  font-size: 38px;
+  font-weight: 800;
+  margin: 0 0 10px 0;
+}
+
+.wl-header p {
+  color: #888;
+  font-size: 16px;
+  margin-bottom: 30px;
+}
+
+.wl-filters {
+  display: flex;
+  gap: 20px;
+  margin-bottom: 40px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.wl-label {
+  color: #666;
+  font-size: 14px;
+  margin-right: 10px;
+}
+
+.wl-select {
+  background: transparent;
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 14px;
+  outline: none;
+  cursor: pointer;
+}
+.wl-select option {
+  background: #111;
+}
+
+/* THE GRID */
+.wl-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 25px;
+}
+
+.wl-card {
+  position: relative;
+  border-radius: 12px;
+  overflow: hidden;
+  display: block;
+  transition: all 0.3s ease;
+  aspect-ratio: 2 / 3;
+  box-shadow: 0 10px 20px rgba(0, 0, 0, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.wl-poster {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: transform 0.4s ease, filter 0.4s ease;
+}
+
+/* HOVER EFFECT */
+.wl-card:hover {
+  transform: translateY(-8px) scale(1.02);
+  border-color: rgba(155, 92, 255, 0.5);
+  box-shadow: 0 15px 35px rgba(155, 92, 255, 0.25);
+  z-index: 10;
+}
+
+.wl-card:hover .wl-poster {
+  transform: scale(1.08);
+  filter: blur(2px) brightness(0.4);
+}
+
+/* OVERLAY UI */
+.wl-overlay {
+  position: absolute;
+  inset: 0;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  opacity: 0;
+  background: linear-gradient(to top, rgba(5,5,7,0.95) 0%, rgba(5,5,7,0.5) 100%);
+  transition: opacity 0.3s ease;
+}
+
+.wl-card:hover .wl-overlay {
+  opacity: 1;
+}
+
+.wl-title {
+  font-size: 20px;
+  font-weight: 700;
+  margin: 0 0 5px 0;
+  color: #fff;
+  text-shadow: 0 2px 5px rgba(0,0,0,0.8);
+}
+
+.wl-stars {
+  color: #f5c518;
+  font-size: 13px;
+  margin-bottom: 15px;
+}
+.wl-rating-num {
+  color: #ccc;
+  margin-left: 5px;
+}
+
+.wl-synopsis {
+  font-size: 13px;
+  color: #ddd;
+  line-height: 1.5;
+  margin: 0;
+}
+
+.wl-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.wl-btn-watched, .wl-btn-remove {
+  width: 100%;
+  padding: 10px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  border: none;
+  transition: 0.2s;
+}
+
+.wl-btn-watched {
+  background: rgba(255, 255, 255, 0.15);
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  backdrop-filter: blur(5px);
+}
+.wl-btn-watched:hover { background: #1db954; border-color: #1db954; color: #000; }
+
+.wl-btn-remove {
+  background: transparent;
+  color: #888;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+.wl-btn-remove:hover { background: rgba(255, 71, 87, 0.15); border-color: #ff4757; color: #ff4757; }
+
+/* Empty state */
+.wl-empty {
+  text-align: center;
+  padding: 100px 20px;
+}
+.btn-explore {
+  display: inline-block;
+  margin-top: 20px;
+  padding: 12px 30px;
+  background: #9b5cff;
+  color: #fff;
+  text-decoration: none;
+  border-radius: 25px;
+  font-weight: 600;
+}

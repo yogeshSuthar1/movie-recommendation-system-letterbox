@@ -11,73 +11,11 @@
   background: #050507;
   color: #ffffff;
   overflow-x: hidden;
+  z-index: 1;
 }
 
 /* ==============================
-   GLASSMORPHISM HEADER
-================================= */
-.home-header {
-  position: fixed;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 75px;
-  display: flex;
-  align-items: center;
-  padding: 0 50px;
-  z-index: 1000;
-  background: rgba(5, 5, 7, 0.4);
-  backdrop-filter: blur(20px);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-  transition: all 0.3s ease;
-}
-
-.logo {
-  font-size: 26px;
-  font-weight: 800;
-  letter-spacing: 1.5px;
-  margin-right: 60px;
-  color: #ffffff;
-}
-
-.logo span {
-  color: #9b5cff;
-}
-
-.home-header nav {
-  display: flex;
-  gap: 35px;
-}
-
-.home-header nav a {
-  color: #a49eb0;
-  text-decoration: none;
-  font-size: 15px;
-  font-weight: 500;
-  transition: color 0.2s ease;
-}
-
-.home-header nav a:hover,
-.home-header nav a.active {
-  color: #ffffff;
-}
-
-.profile {
-  margin-left: auto;
-  width: 40px;
-  height: 40px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 50%;
-  background: linear-gradient(135deg, #7c3aed, #9b5cff);
-  cursor: pointer;
-  font-size: 18px;
-  box-shadow: 0 4px 15px rgba(124, 58, 237, 0.3);
-}
-
-/* ==============================
-   HERO BANNER (SPLIT LAYOUT)
+   HERO BANNER
 ================================= */
 .hero-banner {
   width: 100%;
@@ -87,10 +25,9 @@
   align-items: center;
   padding: 100px 50px 50px 50px;
   overflow: hidden;
+  z-index: 1;
 }
 
-/* Background image deeply blurred */
-/* Background image deeply blurred */
 .hero-bg {
   position: absolute;
   inset: -20px;
@@ -98,10 +35,10 @@
   background-position: center 15%;
   filter: blur(35px);
   z-index: 1;
-  transition: background-image 0.8s ease-in-out; /* Smooth transition added */
+  pointer-events: none;
+  transition: background-image 0.8s ease-in-out;
 }
 
-/* Dark gradient overlay */
 .hero-overlay {
   position: absolute;
   inset: 0;
@@ -117,6 +54,7 @@
     transparent 20%
   );
   z-index: 2;
+  pointer-events: none;
 }
 
 .hero-container {
@@ -137,8 +75,6 @@
   animation: fadeUp 1s ease-out;
 }
 
-/* Clear Poster on the right */
-/* Clear Poster on the right */
 .hero-poster-box {
   flex-shrink: 0;
   width: 320px;
@@ -147,18 +83,13 @@
   overflow: hidden;
   box-shadow: 0 25px 50px rgba(0, 0, 0, 0.9), 0 0 25px rgba(124, 58, 237, 0.3);
   border: 1px solid rgba(255, 255, 255, 0.15);
-  animation: fadeUp 1s ease-out; /* Re-animate when movie changes */
+  animation: fadeUp 1s ease-out;
 }
 
 .hero-poster-img {
   width: 100%;
   height: 100%;
   object-fit: cover;
-}
-
-@keyframes fadeInRight {
-  from { opacity: 0; transform: translateX(50px); }
-  to { opacity: 1; transform: translateX(0); }
 }
 
 @keyframes fadeUp {
@@ -286,9 +217,6 @@
   margin-bottom: 45px;
 }
 
-/* ==============================
-   SEE ALL BUTTON FIX
-================================= */
 .section-header {
   display: flex;
   justify-content: space-between;
@@ -297,7 +225,7 @@
 }
 
 .section-header h2 {
-  font-size: 22px;
+  font-size: 18px;
   font-weight: 700;
   letter-spacing: 1px;
   color: #e5e5e5;
@@ -324,159 +252,25 @@
   background: rgba(155, 92, 255, 0.15);
 }
 
-/* Hide scrollbar for a clean look */
 .movie-row {
   display: flex;
-  gap: 24px;
-  overflow-x: auto;
-  padding: 10px 10px 20px 0;
-  scroll-behavior: smooth;
-}
-
-.movie-row::-webkit-scrollbar {
-  display: none;
-}
-.movie-row {
-  -ms-overflow-style: none;  /* IE and Edge */
-  scrollbar-width: none;  /* Firefox */
-}
-
-/* ==============================
-   MOVIE CARDS (LARGER SIZE & NEON GLOW)
-================================= */
-.movie-card {
-  flex: 0 0 260px; /* Poster Width Increased */
-  width: 260px;
-  cursor: pointer;
-  transition: transform 0.3s ease;
-}
-
-.movie-poster-wrapper {
-  width: 260px; 
-  height: 390px; /* Poster Height Increased (Maintains Aspect Ratio) */
-  border-radius: 12px;
-  overflow: hidden;
-  background: #18181d;
-  position: relative;
-  border: 1px solid rgba(255, 255, 255, 0.05);
-  transition: all 0.3s ease;
-}
-/* ==============================
-   HERO BUTTONS
-================================= */
-.hero-actions {
-  display: flex;
-  gap: 16px;
-}
-
-.btn-play {
-  background: linear-gradient(135deg, #7c3aed, #9b5cff);
-  color: white;
-  border: none;
-  padding: 14px 32px;
-  font-size: 16px;
-  font-weight: 600;
-  border-radius: 12px;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  transition: 0.3s ease;
-  box-shadow: 0 8px 25px rgba(124, 58, 237, 0.35);
-}
-
-.btn-play:hover {
-  transform: translateY(-2px) scale(1.02);
-  box-shadow: 0 12px 30px rgba(124, 58, 237, 0.5);
-}
-
-.btn-watchlist {
-  background: rgba(255, 255, 255, 0.08);
-  color: white;
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  padding: 14px 32px;
-  font-size: 16px;
-  font-weight: 600;
-  border-radius: 12px;
-  cursor: pointer;
-  backdrop-filter: blur(10px);
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  transition: 0.3s ease;
-}
-
-.btn-watchlist:hover {
-  background: rgba(255, 255, 255, 0.15);
-  border-color: rgba(255, 255, 255, 0.4);
-  transform: translateY(-2px);
-}
-
-/* ==============================
-   MAIN CONTENT & ROWS
-================================= */
-.home-content {
-  padding: 0 50px 80px 50px;
-  margin-top: -30px; /* Pulls content up slightly over the gradient */
-  position: relative;
-  z-index: 10;
-}
-
-.movie-section {
-  margin-bottom: 45px;
-}
-
-.section-header {
-  margin-bottom: 16px;
-}
-
-.section-header h2 {
-  font-size: 18px;
-  font-weight: 700;
-  letter-spacing: 1px;
-  color: #e5e5e5;
-  text-transform: uppercase;
-}
-
-/* Hide scrollbar for a clean look */
-.movie-row {
-  display: flex;
-  gap: 20px;
-  overflow-x: auto;
-  padding: 10px 0 20px 0;
-  scroll-behavior: smooth;
-}
-
-.movie-row::-webkit-scrollbar {
-  display: none;
-}
-.movie-row {
-  -ms-overflow-style: none;  /* IE and Edge */
-  scrollbar-width: none;  /* Firefox */
-}
-
-/* Hide scrollbar for a clean look */
-.movie-row {
-  display: flex;
-  gap: 30px; /* Poster ke beech ka gap badha diya */
+  gap: 30px; 
   overflow-x: auto;
   padding: 15px 10px 30px 0;
   scroll-behavior: smooth;
+  -ms-overflow-style: none;  
+  scrollbar-width: none;  
 }
 
 .movie-row::-webkit-scrollbar {
   display: none;
 }
-.movie-row {
-  -ms-overflow-style: none;  /* IE and Edge */
-  scrollbar-width: none;  /* Firefox */
-}
 
 /* ==============================
-   MOVIE CARDS (MASSIVE SIZE & NEON GLOW)
+   MOVIE CARDS
 ================================= */
 .movie-card {
-  flex: 0 0 300px; /* Poster Width Increased to 300px */
+  flex: 0 0 300px; 
   width: 300px;
   cursor: pointer;
   transition: transform 0.3s ease;
@@ -484,7 +278,7 @@
 
 .movie-poster-wrapper {
   width: 300px; 
-  height: 450px; /* Poster Height Increased to 450px (2:3 Aspect Ratio) */
+  height: 450px; 
   border-radius: 14px;
   overflow: hidden;
   background: #18181d;
@@ -500,9 +294,8 @@
   transition: transform 0.4s ease, filter 0.4s ease;
 }
 
-/* The Hover Magic */
 .movie-card:hover .movie-poster-wrapper {
-  transform: translateY(-10px); /* Bada poster hai toh hover pe thoda aur upar aayega */
+  transform: translateY(-10px); 
   border-color: rgba(155, 92, 255, 0.6);
   box-shadow: 0 12px 35px rgba(124, 58, 237, 0.45),
               0 0 20px rgba(155, 92, 255, 0.25);
@@ -519,7 +312,7 @@
 }
 
 .movie-info h3 {
-  font-size: 17px; /* Title font size badha diya */
+  font-size: 17px; 
   font-weight: 600;
   color: #fff;
   white-space: nowrap;
@@ -532,7 +325,7 @@
   align-items: center;
   gap: 12px;
   margin-top: 8px;
-  font-size: 14px; /* Meta text font size badha diya */
+  font-size: 14px; 
   color: #999;
 }
 
@@ -575,4 +368,3 @@
   color: #ff4757;
   font-size: 18px;
 }
-
