@@ -8,9 +8,11 @@ from backend.routes.auth import auth_bp
 from backend.routes.watchlist import watchlist_bp
 from backend.routes.rating import rating_bp
 from backend.routes.review import review_bp
-from backend.routes.profile import profile_bp
+from backend.routes.profile import profile_bp,social_bp
 from backend.routes.preferences import preferences_bp
 from backend.routes.home import home_bp
+from backend.routes.collections import collections_bp
+
 
 app = Flask(__name__)
 CORS(app)
@@ -26,6 +28,8 @@ app.register_blueprint(review_bp)
 app.register_blueprint(profile_bp)
 app.register_blueprint(preferences_bp)
 app.register_blueprint(home_bp)
+app.register_blueprint(collections_bp)
+app.register_blueprint(social_bp)
 
 @app.route("/")
 def home():

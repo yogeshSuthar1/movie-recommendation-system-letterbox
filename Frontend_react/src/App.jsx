@@ -6,6 +6,8 @@ import MovieDetail from './pages/MovieDetail';
 import Profile from './pages/profile';
 import MonthlyReview from './pages/MonthlyReview';
 import Watchlist from './pages/Watchlist';
+import ActorProfile from "./pages/ActorProfile";
+
 
 import {
   BrowserRouter,
@@ -48,6 +50,7 @@ function App() {
         <Route path="/profile/:id" element={<Profile />} />
         <Route path="/monthly-review" element={<MonthlyReview />} />
         <Route path="/watchlist" element={<Watchlist />} />
+        <Route path="/actor/:actorName" element={<ActorProfile />} />
         
 
       </Routes>

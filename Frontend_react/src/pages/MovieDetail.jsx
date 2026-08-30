@@ -1,6 +1,15 @@
 import React, { useState, useEffect, useRef } from "react";
 import { useParams, Link } from "react-router-dom";
-import { getMovieDetail, toggleReviewLike, postReview, getMovieReviews, addToWatchlist } from "../services/homeService";
+import { 
+  getMovieDetail, 
+  toggleReviewLike, 
+  postReview, 
+  getMovieReviews, 
+  addToWatchlist, 
+  getUserCollections, 
+  createCollection, 
+  addMovieToCollection 
+} from "../services/homeService";
 import SearchModal from "../components/SearchModal";
 import Navbar from "../components/Navbar";
 import "../styles/movieDetail.css";
@@ -24,7 +33,23 @@ export default function MovieDetail() {
   const [visibleReviews, setVisibleReviews] = useState(3);
   const [reviews, setReviews] = useState([]);
 
-  // 🌟 NAYA: Auto-scroll ke liye reference aur current user ka data
+  // 🌟 Collections & Modal States
+  const [showColModal, setShowColModal] = useState(false);
+  const [userCollections, setUserCollections] = useState([]);
+  const [newColTitle, setNewColTitle] = useState("");
+  const [creatingNew, setCreatingNew] = useState(false);
+
+  const handleOpenCollectionModal = async () => {
+    const userId = localStorage.getItem("user_id");
+    if (!userId) {
+      alert("Please login first!");
+      return;
+    }
+    const cols = await getUserCollections(userId);
+    setUserCollections(cols);
+    setShowColModal(true);
+  };
+
   const reviewSectionRef = useRef(null);
   const currentUsername = localStorage.getItem("username");
 
@@ -42,6 +67,25 @@ export default function MovieDetail() {
     return nameParts.length >= 2
       ? (nameParts[0][0] + nameParts[1][0]).toUpperCase()
       : nameParts[0][0].toUpperCase();
+  };
+
+  const handleAddToExisting = async (collectionId) => {
+    const res = await addMovieToCollection(collectionId, id);
+    alert(res.message);
+    if (res.success) setShowColModal(false);
+  };
+
+  const handleCreateAndAdd = async (e) => {
+    e.preventDefault();
+    if (!newColTitle.trim()) return;
+    const success = await createCollection(newColTitle, "");
+    if (success) {
+      setNewColTitle("");
+      setCreatingNew(false);
+      const userId = localStorage.getItem("user_id");
+      const cols = await getUserCollections(userId);
+      setUserCollections(cols);
+    }
   };
 
   useEffect(() => {
@@ -111,12 +155,10 @@ export default function MovieDetail() {
     }
   };
 
-  // 🌟 NAYA: Check karo ki logged-in user ne is movie ko review kiya hai ya nahi
   const hasReviewed = reviews.some(review => review.username === currentUsername);
 
   const handleWatchedClick = () => {
     if (!hasReviewed && reviewSectionRef.current) {
-      // Agar review nahi diya hai, toh smooth scroll karke form par le jao
       reviewSectionRef.current.scrollIntoView({ behavior: "smooth", block: "center" });
     }
   };
@@ -126,7 +168,6 @@ export default function MovieDetail() {
 
   return (
     <div className="movie-detail-page">
-      
       <Navbar onOpenSearch={() => setIsSearchOpen(true)} />
 
       {/* ================= HERO SECTION ================= */}
@@ -150,8 +191,6 @@ export default function MovieDetail() {
             </div>
 
             <div className="md-actions">
-              
-              {/* 🌟 NAYA: Smart "Watched" Button */}
               <button 
                 className={hasReviewed ? "btn-watched" : "btn-watchlist"}
                 onClick={handleWatchedClick}
@@ -164,8 +203,12 @@ export default function MovieDetail() {
               >
                 {hasReviewed ? "✔ Watched" : "Mark as Watched"}
               </button>
+
+              {/* 🌟 Collection Button */}
+              <button className="btn-action collection-btn" onClick={handleOpenCollectionModal}>
+                📁 Add to Collection
+              </button>
               
-              {/* Watchlist Button */}
               <button 
                 className="btn-watchlist" 
                 onClick={handleAddToWatchlist}
@@ -177,16 +220,13 @@ export default function MovieDetail() {
               >
                 {isWatchlistAdded ? "✔ Added to Watchlist" : "🔖 Add to Watchlist"}
               </button>
-              
             </div>
           </div>
         </div>
       </div>
 
-      {/* ================= MAIN CONTENT (SPLIT LAYOUT) ================= */}
+      {/* ================= MAIN CONTENT ================= */}
       <div className="md-main-split">
-        
-        {/* LEFT COLUMN */}
         <div className="md-left-col">
           <section className="md-section">
             <h2>Overview</h2>
@@ -197,18 +237,22 @@ export default function MovieDetail() {
             <h2>Cast</h2>
             <div className="md-cast-row">
               {movie.cast?.map((actor) => (
-                <div key={actor.id} className="cast-card">
+                <Link 
+                  to={`/actor/${encodeURIComponent(actor.name || actor)}`} 
+                  key={actor.id || actor} 
+                  className="cast-card"
+                  style={{ textDecoration: "none", color: "inherit" }}
+                >
                   <div className="cast-avatar">{getInitials(actor.name)}</div>
                   <h4 className="cast-name">{actor.name}</h4>
                   <p className="cast-role">{actor.role}</p>
-                </div>
+                </Link>
               ))}
             </div>
           </section>
 
           <hr className="md-divider" />
 
-          {/* 🌟 NAYA: Ref attached to scroll target */}
           <section className="md-section" ref={reviewSectionRef}>
             <div className="review-header-flex">
               <h2>Your Review</h2>
@@ -255,7 +299,6 @@ export default function MovieDetail() {
             </div>
           </section>
 
-          {/* ASLI USER REVIEWS */}
           <section className="md-section">
             <h2>User Reviews</h2>
             <div className="reviews-list">
@@ -273,7 +316,6 @@ export default function MovieDetail() {
                   </div>
                   <p className="ur-text">{review.review_text}</p>
                   
-                  {/* LIKE BUTTON ZONE */}
                   <div className="review-actions">
                     <button 
                       className={`like-btn ${review.is_liked ? 'liked' : ''}`}
@@ -299,7 +341,6 @@ export default function MovieDetail() {
           </section>
         </div>
 
-        {/* RIGHT COLUMN: MOVIE DETAILS & RATING GRAPH */}
         <div className="md-right-col">
           <div className="sidebar-card">
             <h3>Rating Distribution</h3>
@@ -335,7 +376,6 @@ export default function MovieDetail() {
         </div>
       </div>
 
-      {/* ================= BOTTOM: MORE LIKE THIS ================= */}
       <div className="md-bottom-full">
         <h2>More Like This</h2>
         <div className="md-recommendation-row">
@@ -348,17 +388,52 @@ export default function MovieDetail() {
               </div>
             </Link>
           ))}
-          {movie.recommendations?.length >= 10 && (
-            <div className="view-more-card" onClick={() => alert("Navigate to full genre page here!")}>
-              <div className="view-more-circle">→</div>
-              <span>View More</span>
-            </div>
-          )}
         </div>
       </div>
 
-      <SearchModal isOpen={isSearchOpen} onClose={() => setIsSearchOpen(false)} />
+      {/* 🌟 Add to Collection Modal Popup */}
+      {showColModal && (
+        <div className="modal-overlay" onClick={() => setShowColModal(false)}>
+          <div className="col-modal-content" onClick={(e) => e.stopPropagation()}>
+            <h3>Add to Collection</h3>
+            
+            <div className="col-list-scroll">
+              {userCollections.length === 0 ? (
+                <p className="no-col-text" style={{ color: "#888", textAlign: "center", padding: "10px" }}>No collections found. Create one below!</p>
+              ) : (
+                userCollections.map(col => (
+                  <div key={col.collection_id} className="col-select-item" onClick={() => handleAddToExisting(col.collection_id)}>
+                    <span>📂 {col.title}</span>
+                    <button className="add-plus-btn">+</button>
+                  </div>
+                ))
+              )}
+            </div>
 
+            {!creatingNew ? (
+              <button className="btn-create-toggle" onClick={() => setCreatingNew(true)}>+ Create New Collection</button>
+            ) : (
+              <form onSubmit={handleCreateAndAdd} className="quick-create-form">
+                <input 
+                  type="text" 
+                  placeholder="Collection Name..." 
+                  value={newColTitle} 
+                  onChange={(e) => setNewColTitle(e.target.value)}
+                  autoFocus
+                />
+                <div className="qc-actions">
+                  <button type="submit" className="qc-save">Save & Create</button>
+                  <button type="button" className="qc-cancel" onClick={() => setCreatingNew(false)}>Cancel</button>
+                </div>
+              </form>
+            )}
+
+            <button className="close-modal-x" onClick={() => setShowColModal(false)}>✕</button>
+          </div>
+        </div>
+      )}
+
+      <SearchModal isOpen={isSearchOpen} onClose={() => setIsSearchOpen(false)} />
     </div>
   );
 }

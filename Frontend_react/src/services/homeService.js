@@ -46,27 +46,7 @@ export const getMovieDetail = async (movieId) => {
   }
 };
 
-export const performSearch = async (searchQuery, searchType = "movie") => {
-  if (!searchQuery) return [];
-  
-  try {
-    const token = localStorage.getItem("token"); 
-    // API URL mein '&type=' bhej rahe hain
-    const response = await fetch(`http://127.0.0.1:5000/search?q=${searchQuery}&save=false&type=${searchType}`, {
-      method: "GET",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${token}`
-      }
-    });
 
-    if (!response.ok) throw new Error("Search failed");
-    return await response.json();
-  } catch (error) {
-    console.error("API Error in performSearch:", error);
-    return [];
-  }
-};
 
 // Toggle Review Like
 export const toggleReviewLike = async (reviewId) => {
@@ -201,5 +181,206 @@ export const removeFromWatchlist = async (movieId) => {
   } catch (error) {
     console.error("API Error in removeFromWatchlist:", error);
     return false;
+  }
+};
+
+// Global Search (Movies & Users)
+export const performSearch = async (query, type = "movie") => {
+  if (!query) return [];
+  try {
+    const token = localStorage.getItem("token");
+    // URL mein type parameter bhej rahe hain
+    const res = await fetch(`http://127.0.0.1:5000/search?q=${encodeURIComponent(query)}&type=${type}`, {
+      headers: { "Authorization": `Bearer ${token}` }
+    });
+    if (!res.ok) throw new Error("Search failed");
+    return await res.json();
+  } catch (error) {
+    console.error("API Error in performSearch:", error);
+    return [];
+  }
+};
+
+// Get Search History
+export const getSearchHistory = async () => {
+  try {
+    const token = localStorage.getItem("token");
+    const res = await fetch(`http://127.0.0.1:5000/search/history`, {
+      headers: { "Authorization": `Bearer ${token}` }
+    });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return data.history || [];
+  } catch (error) {
+    return [];
+  }
+};
+
+// Clear Search History
+export const clearSearchHistory = async () => {
+  try {
+    const token = localStorage.getItem("token");
+    const res = await fetch(`http://127.0.0.1:5000/search/history`, {
+      method: "DELETE",
+      headers: { "Authorization": `Bearer ${token}` }
+    });
+    return res.ok;
+  } catch (error) {
+    return false;
+  }
+};
+
+export const getUserAnalytics = async (userId) => {
+  try {
+    const res = await fetch(`http://127.0.0.1:5000/profile/${userId}/analytics`);
+    if (!res.ok) throw new Error("Analytics failed");
+    return await res.json();
+  } catch (error) {
+    console.error("Error fetching analytics:", error);
+    return null;
+  }
+};
+
+export const getUserCollections = async (userId) => {
+  try {
+    const res = await fetch(`http://127.0.0.1:5000/user/${userId}/collections`);
+    if (!res.ok) return [];
+    return await res.json();
+  } catch (error) {
+    return [];
+  }
+};
+
+export const createCollection = async (title, description) => {
+  try {
+    const token = localStorage.getItem("token");
+    const res = await fetch(`http://127.0.0.1:5000/collections`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${token}`
+      },
+      body: JSON.stringify({ title, description })
+    });
+    return res.ok;
+  } catch (error) {
+    return false;
+  }
+};
+
+export const addMovieToCollection = async (collectionId, movieId) => {
+  try {
+    const token = localStorage.getItem("token");
+    const res = await fetch(`http://127.0.0.1:5000/collections/${collectionId}/movies`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${token}`
+      },
+      body: JSON.stringify({ movie_id: movieId })
+    });
+    const data = await res.json();
+    return { success: res.ok, message: data.message || data.error };
+  } catch (error) {
+    return { success: false, message: "Network error" };
+  }
+};
+
+export const getCollectionDetails = async (collectionId) => {
+  try {
+    const res = await fetch(`http://127.0.0.1:5000/collections/${collectionId}`);
+    if (!res.ok) return null;
+    return await res.json();
+  } catch (error) {
+    return null;
+  }
+};
+
+export const searchUsers = async (query) => {
+  try {
+    const res = await fetch(`http://127.0.0.1:5000/users/search?q=${query}`);
+    if (!res.ok) return [];
+    return await res.json();
+  } catch (error) {
+    return [];
+  }
+};
+
+export const toggleFollowUser = async (targetUserId) => {
+  try {
+    const token = localStorage.getItem("token");
+    const currentUserId = localStorage.getItem("user_id"); // NAYA: Logged-in user ki ID
+    
+    const res = await fetch(`http://127.0.0.1:5000/user/${targetUserId}/follow`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${token}`
+      },
+      body: JSON.stringify({ current_user_id: currentUserId }) // Body mein ID bhej rahe hain
+    });
+    return await res.json();
+  } catch (error) {
+    return null;
+  }
+};
+
+export const getUserFollowStats = async (userId) => {
+  try {
+    const res = await fetch(`http://127.0.0.1:5000/user/${userId}/stats`);
+    if (!res.ok) return { followers_count: 0, following_count: 0 };
+    return await res.json();
+  } catch (error) {
+    return { followers_count: 0, following_count: 0 };
+  }
+};
+
+
+export const updateUserProfile = async (userId, updateData) => {
+  try {
+    const token = localStorage.getItem("token");
+    const res = await fetch(`http://127.0.0.1:5000/profile/${userId}`, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${token}`
+      },
+      body: JSON.stringify(updateData) // { username, bio } pass karenge
+    });
+    const data = await res.json();
+    return { success: res.ok, message: data.message || data.error };
+  } catch (error) {
+    return { success: false, message: "Network error" };
+  }
+};
+
+
+export const getActorMovies = async (actorName) => {
+  try {
+    const res = await fetch(`http://127.0.0.1:5000/actor/${encodeURIComponent(actorName)}`);
+    if (!res.ok) return [];
+    return await res.json();
+  } catch (error) {
+    return [];
+  }
+};
+
+export const getFollowersList = async (userId) => {
+  try {
+    const res = await fetch(`http://127.0.0.1:5000/user/${userId}/followers`);
+    if (!res.ok) return [];
+    return await res.json();
+  } catch (error) {
+    return [];
+  }
+};
+
+export const getFollowingList = async (userId) => {
+  try {
+    const res = await fetch(`http://127.0.0.1:5000/user/${userId}/following`);
+    if (!res.ok) return [];
+    return await res.json();
+  } catch (error) {
+    return [];
   }
 };

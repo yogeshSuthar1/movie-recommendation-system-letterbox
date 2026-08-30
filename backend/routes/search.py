@@ -1,4 +1,5 @@
-from flask import Blueprint, request, jsonify, g
+import jwt
+from flask import Blueprint, request, jsonify, g, current_app
 from sqlalchemy import text
 
 from backend.services.search import search_movies
@@ -9,39 +10,71 @@ from backend.middleware.auth_middleware import token_required
 search_bp = Blueprint("search", __name__)
 
 @search_bp.route("/search", methods=["GET"])
-@token_required
 def search():
     query = request.args.get("q", "").strip()
-    search_type = request.args.get("type", "movie").lower() # NAYA PARAMETER
-    save_history = request.args.get("save", "false").lower() == "true"
-
-    if not query:
-        return jsonify([])
-
-    # History save karne wala tera existing code yahin rahega...
-
-    if search_type == "movie":
-        # Teri existing movie search service call
-        result = search_movies(query)
-    elif search_type == "user":
-        # NAYA: User ko DB mein dhoondhne ki query (apne DB variables ke hisaab se)
-        with engine.connect() as conn:
-            users_query = conn.execute(
-                text("SELECT id as user_id, username, profile_pic FROM users WHERE username ILIKE :q LIMIT 12"),
-                {"q": f"%{query}%"}
-            ).mappings().all()
-            result = [dict(u) for u in users_query]
+    search_type = request.args.get("type", "movie")
     
-    return jsonify(result)
+    current_user_id = None
+    auth_header = request.headers.get("Authorization")
+    if auth_header and auth_header.startswith("Bearer "):
+        try:
+            token = auth_header.split(" ")[1]
+            payload = jwt.decode(token, current_app.config.get("SECRET_KEY", "your_secret_key"), algorithms=["HS256"])
+            current_user_id = payload.get("user_id") or payload.get("id")
+        except Exception:
+            pass
 
+    with engine.connect() as conn:
+        if search_type == "user":
+            if current_user_id:
+                users_query = text("""
+                    SELECT user_id, username 
+                    FROM users 
+                    WHERE username LIKE :q AND user_id != :current_id 
+                    LIMIT 12
+                """)
+                results = [dict(row) for row in conn.execute(users_query, {"q": f"%{query}%", "current_id": current_user_id}).mappings().all()]
+            else:
+                users_query = text("""
+                    SELECT user_id, username 
+                    FROM users 
+                    WHERE username LIKE :q 
+                    LIMIT 12
+                """)
+                results = [dict(row) for row in conn.execute(users_query, {"q": f"%{query}%"}).mappings().all()]
+            
+            return jsonify(results), 200
+
+        elif search_type == "actor":
+            search_pattern = f"%{query}%"
+            actors_query = text("""
+                SELECT MIN(actor_id) as actor_id, actor_name 
+                FROM actors 
+                WHERE actor_name LIKE :q 
+                GROUP BY actor_name
+                LIMIT 12
+            """)
+            results = [dict(row) for row in conn.execute(actors_query, {"q": search_pattern}).mappings().all()]
+            return jsonify(results), 200
+
+        else:
+            # Movie search logic
+            movies_query = text("""
+                SELECT movie_id, title, release_year, avg_rating, poster_url 
+                FROM movies 
+                WHERE title LIKE :q 
+                LIMIT 12
+            """)
+            results = [dict(row) for row in conn.execute(movies_query, {"q": f"%{query}%"}).mappings().all()]
+            return jsonify(results), 200
+
+    
 @search_bp.route("/search/history", methods=["GET"])
 @token_required
 def search_history():
-
     user_id = g.user_id
 
     with engine.connect() as conn:
-
         history = conn.execute(
             text("""
                 SELECT
@@ -64,14 +97,13 @@ def search_history():
         "history": history_list
     }), 200
 
+
 @search_bp.route("/search/history/<int:history_id>", methods=["DELETE"])
 @token_required
 def delete_search_history(history_id):
-
     user_id = g.user_id
 
     with engine.begin() as conn:
-
         result = conn.execute(
             text("""
                 DELETE FROM search_history
@@ -98,11 +130,9 @@ def delete_search_history(history_id):
 @search_bp.route("/search/history", methods=["DELETE"])
 @token_required
 def clear_search_history():
-
     user_id = g.user_id
 
     with engine.begin() as conn:
-
         result = conn.execute(
             text("""
                 DELETE FROM search_history

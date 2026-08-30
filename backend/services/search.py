@@ -8,7 +8,7 @@ movies = joblib.load(os.path.join(MODELS_DIR, "movies.pkl"))
 prefix_index = joblib.load(os.path.join(MODELS_DIR, "prefix_index.pkl"))
 
 
-def search_movies(query, limit=10):
+def search_movies(query, limit=20):
 
     query = query.lower().strip()
 

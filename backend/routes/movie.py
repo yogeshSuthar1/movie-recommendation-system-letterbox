@@ -3,6 +3,7 @@ from sqlalchemy import text
 from backend.database import engine
 from backend.services.recommender import recommend
 
+
 movie_bp = Blueprint("movie", __name__)
 
 @movie_bp.route("/movie/<int:movie_id>", methods=["GET"])
@@ -90,3 +91,24 @@ def get_movie_detail(movie_id):
     except Exception as e:
         print("MOVIE DETAIL API ERROR:", e)
         return jsonify({"error": str(e)}), 500
+
+
+@movie_bp.route("/actor/<string:actor_name>", methods=["GET"])
+def get_actor_movies(actor_name):
+    # 'as Barbie' ya extra text hataane ke liye sirf main naam le lo
+    clean_actor_name = actor_name.split(" as ")[0].strip()
+
+    with engine.connect() as conn:
+        movies = conn.execute(
+            text("""
+                SELECT DISTINCT m.movie_id, m.title, m.release_year, m.avg_rating, m.poster_url 
+                FROM movies m
+                JOIN movie_actors ma ON m.movie_id = ma.movie_id
+                JOIN actors a ON ma.actor_id = a.actor_id
+                WHERE a.actor_name LIKE :actor
+                LIMIT 20
+            """),
+            {"actor": f"%{clean_actor_name}%"}
+        ).mappings().all()
+
+    return jsonify([dict(m) for m in movies]), 200

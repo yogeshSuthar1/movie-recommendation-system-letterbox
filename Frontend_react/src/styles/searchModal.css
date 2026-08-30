@@ -1,27 +1,29 @@
-.search-modal-overlay {
+.search-overlay {
   position: fixed;
   inset: 0;
-  width: 100vw;
-  height: 100vh;
-  background: rgba(5, 5, 7, 0.85);
-  backdrop-filter: blur(25px);
-  -webkit-backdrop-filter: blur(25px);
+  background: rgba(0, 0, 0, 0.85); 
+  backdrop-filter: blur(8px);
+  z-index: 9999999;
   display: flex;
-  flex-direction: column;
-  align-items: center;
-  padding-top: 10vh;
-  z-index: 999999; /* 🌟 SABSE AAGE DIKHANE KE LIYE */
-  animation: fadeIn 0.3s ease-out;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 100px;
+  animation: fadeIn 0.2s ease-out;
 }
 
 @keyframes fadeIn {
-  from { opacity: 0; transform: scale(1.05); }
-  to { opacity: 1; transform: scale(1); }
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 .search-modal-content {
-  width: 90%;
-  max-width: 1200px;
+  background: #111114;
+  width: 100%;
+  max-width: 750px; /* Thoda aur chouda kar diya grid ke liye */
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 25px 50px rgba(0, 0, 0, 0.9);
+  overflow: hidden;
   display: flex;
   flex-direction: column;
 }
@@ -29,98 +31,299 @@
 .search-input-wrapper {
   display: flex;
   align-items: center;
-  border-bottom: 2px solid rgba(255, 255, 255, 0.2);
-  padding-bottom: 15px;
-  margin-bottom: 40px;
+  padding: 15px 20px;
+  background: #1a1a20;
 }
 
-.search-icon-big {
-  font-size: 40px;
-  margin-right: 20px;
-  color: rgba(255, 255, 255, 0.5);
+.search-icon-inside {
+  margin-right: 15px;
 }
 
-.search-input-huge {
+.search-input-wrapper input {
   flex: 1;
   background: transparent;
   border: none;
   color: #fff;
-  font-size: 45px;
-  font-weight: 700;
+  font-size: 20px;
   outline: none;
+  font-family: inherit;
 }
 
-.close-btn {
+.search-input-wrapper input::placeholder {
+  color: #666;
+}
+
+.close-search-btn {
   background: rgba(255, 255, 255, 0.1);
-  color: #fff;
   border: none;
-  padding: 8px 15px;
-  border-radius: 8px;
+  color: #aaa;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 6px 10px;
+  border-radius: 6px;
   cursor: pointer;
+  letter-spacing: 1px;
 }
 
-.search-results-container {
-  width: 100%;
-  max-height: 65vh;
-  overflow-y: auto;
-}
-
-.search-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-  gap: 30px;
-}
-
-.search-card {
-  text-decoration: none;
+.close-search-btn:hover {
   color: #fff;
-  transition: transform 0.2s;
-}
-.search-card:hover {
-  transform: translateY(-8px);
+  background: rgba(255, 255, 255, 0.2);
 }
 
-.search-card img {
-  width: 100%;
-  height: 270px;
-  object-fit: cover;
-  border-radius: 12px;
-  margin-bottom: 12px;
-}
-
-/* Toggle Container */
-.search-toggle-container {
+/* ============================
+   TABS STYLING (MOVIES / USERS)
+=============================== */
+.search-tabs {
   display: flex;
-  gap: 15px;
-  margin-bottom: 30px;
-  justify-content: center;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  background: #16161b;
 }
 
-.toggle-btn {
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+.s-tab {
+  flex: 1;
+  background: transparent;
+  border: none;
   color: #888;
-  padding: 8px 20px;
-  border-radius: 20px;
-  font-size: 14px;
+  padding: 14px 0;
+  font-size: 15px;
+  font-weight: 600;
   cursor: pointer;
+  border-bottom: 2px solid transparent;
   transition: all 0.3s ease;
 }
 
-.toggle-btn.active {
-  background: rgba(155, 92, 255, 0.2);
+.s-tab:hover {
+  color: #ddd;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.s-tab.active {
+  color: #9b5cff;
+  border-bottom-color: #9b5cff;
+}
+
+/* ============================
+   SEARCH HISTORY STYLING
+=============================== */
+.search-history-section {
+  padding: 15px 20px;
+}
+
+.sh-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.sh-header h4 {
+  color: #777;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  margin: 0;
+}
+
+.clear-hist-btn {
+  background: transparent;
+  border: none;
+  color: #ff4757;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.clear-hist-btn:hover { text-decoration: underline; }
+
+.history-item {
+  color: #ccc;
+  padding: 10px 15px;
+  cursor: pointer;
+  border-radius: 8px;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  transition: 0.2s;
+}
+.history-item:hover {
+  background: rgba(255, 255, 255, 0.05);
+  color: #fff;
+}
+
+/* ============================
+   RESULTS AREA (GRID POSTERS)
+=============================== */
+.search-results-container {
+  max-height: 60vh; 
+  overflow-y: auto; 
+  padding: 15px 20px;
+}
+
+.search-results-container::-webkit-scrollbar {
+  width: 6px;
+}
+.search-results-container::-webkit-scrollbar-thumb {
+  background: #444;
+  border-radius: 10px;
+}
+
+.search-msg {
+  text-align: center;
+  color: #888;
+  padding: 30px;
+  font-size: 16px;
+}
+
+/* 🌟 NAYA: GRID LAYOUT FOR POSTERS */
+.results-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 20px;
+  padding-top: 10px;
+}
+
+.search-result-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-decoration: none;
+  color: #fff;
+  transition: transform 0.2s ease, background 0.2s;
+  padding: 8px;
+  border-radius: 10px;
+}
+
+.search-result-card:hover {
+  background: rgba(155, 92, 255, 0.1);
+  transform: translateY(-5px);
+}
+
+.src-poster-wrapper {
+  width: 100%;
+  aspect-ratio: 2 / 3;
+  border-radius: 8px;
+  overflow: hidden;
+  margin-bottom: 10px;
+  box-shadow: 0 4px 10px rgba(0,0,0,0.5);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.src-poster {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.src-info {
+  text-align: center;
+  width: 100%;
+}
+
+.src-info h4 {
+  margin: 0 0 4px 0;
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis; /* Bada naam automatically cut jayega (...) */
+}
+
+.src-info span {
+  font-size: 11px;
+  color: #aaa;
+}
+
+/* User Card Specific Styling */
+.src-avatar {
+  width: 90px;
+  height: 90px;
+  border-radius: 50%;
+  background: #2a2a2a;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #9b5cff;
+  font-weight: 800;
+  font-size: 30px;
+  margin-bottom: 10px;
+  overflow: hidden;
+  border: 2px solid rgba(155, 92, 255, 0.3);
+}
+
+.src-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.sm-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 15px;
+}
+
+.sm-tabs {
+  display: flex;
+  gap: 10px;
+}
+
+.sm-tab-btn {
+  background: transparent;
+  border: none;
+  color: #888;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 5px 10px;
+  border-bottom: 2px solid transparent;
+  transition: 0.2s;
+}
+
+.sm-tab-btn.active {
   color: #fff;
   border-color: #9b5cff;
 }
 
-/* User Card Style Override */
-.search-card.user-card {
-  text-align: center;
+.sm-user-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: #1a1a20;
+  padding: 12px 15px;
+  border-radius: 8px;
+  margin-bottom: 10px;
 }
-.search-card.user-card img {
-  width: 120px;
-  height: 120px;
-  border-radius: 50%; /* Circle profile pic */
-  margin: 0 auto 10px auto;
-  display: block;
+
+.sm-user-info {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.sm-user-avatar {
+  width: 38px;
+  height: 38px;
+  background: linear-gradient(135deg, #3a1a6e, #9b5cff);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: bold;
+  font-size: 14px;
+}
+
+.btn-follow-action {
+  background: #9b5cff;
+  color: #fff;
+  border: none;
+  padding: 6px 16px;
+  border-radius: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: 0.2s;
+}
+
+.btn-follow-action:hover {
+  background: #8739ff;
 }
