@@ -71,7 +71,7 @@ export const toggleReviewLike = async (reviewId) => {
 
 // Post a new review
 // postReview mein 'rating' add kiya
-export const postReview = async (movieId, reviewText, rating) => {
+export const postReview = async (movieId, reviewText, rating, isSpoiler=false ) => {
   try {
     const token = localStorage.getItem("token");
     const response = await fetch(`http://127.0.0.1:5000/reviews/${movieId}`, {
@@ -81,7 +81,7 @@ export const postReview = async (movieId, reviewText, rating) => {
         "Authorization": `Bearer ${token}`
       },
       // Backend ko text aur rating dono bhej rahe hain
-      body: JSON.stringify({ review_text: reviewText, rating: rating }) 
+      body: JSON.stringify({ review_text: reviewText, rating: rating ,is_spoiler: isSpoiler}) 
     });
 
     if (!response.ok) throw new Error("Failed to post review");
@@ -96,7 +96,8 @@ export const postReview = async (movieId, reviewText, rating) => {
 export const getMovieReviews = async (movieId) => {
   try {
     const token = localStorage.getItem("token");
-    const response = await fetch(`http://127.0.0.1:5000/reviews/${movieId}`, {
+    // 🌟 Yahan URL mein '/movie/' aur aage '/reviews' lagana hai
+    const response = await fetch(`http://127.0.0.1:5000/movie/${movieId}/reviews`, {
       method: "GET",
       headers: {
         "Content-Type": "application/json",
@@ -355,12 +356,14 @@ export const updateUserProfile = async (userId, updateData) => {
 };
 
 
-export const getActorMovies = async (actorName) => {
+export const getActorMovies = async (actorName, page = 1, sortBy = "year") => {
   try {
-    const res = await fetch(`http://127.0.0.1:5000/actor/${encodeURIComponent(actorName)}`);
-    if (!res.ok) return [];
-    return await res.json();
+    // 🌟 NAYA: URL mein query parameters add kar diye
+    const response = await fetch(`http://127.0.0.1:5000/actor/${encodeURIComponent(actorName)}?page=${page}&sort_by=${sortBy}`);
+    if (!response.ok) throw new Error("Failed to fetch actor movies");
+    return await response.json();
   } catch (error) {
+    console.error("API Error in getActorMovies:", error);
     return [];
   }
 };
@@ -382,5 +385,48 @@ export const getFollowingList = async (userId) => {
     return await res.json();
   } catch (error) {
     return [];
+  }
+};
+
+export const getUserReviews = async (userId) => {
+  try {
+    const response = await fetch(`http://127.0.0.1:5000/user/${userId}/reviews`);
+    if (!response.ok) throw new Error("Failed to fetch user reviews");
+    return await response.json();
+  } catch (error) {
+    console.error("API Error in getUserReviews:", error);
+    return [];
+  }
+};
+
+export const getMovieTrailerKey = async (title, year) => {
+  try {
+    const res = await fetch(`http://127.0.0.1:5000/movie/trailer?title=${encodeURIComponent(title)}&year=${encodeURIComponent(year || "")}`);
+    const data = await res.json();
+    if (res.ok && data.videoId) {
+      return data.videoId; // 👈 Sahi 11-character video ID aani chahiye
+    }
+    return null;
+  } catch (error) {
+    console.error("Trailer API Fetch Error:", error);
+    return null;
+  }
+};
+
+// 🎲 Get Surprise Movie
+export const getSurpriseMovie = async () => {
+  try {
+    const token = localStorage.getItem("token");
+    const response = await fetch(`http://127.0.0.1:5000/movie/surprise`, {
+      method: "GET",
+      headers: {
+        "Authorization": `Bearer ${token}`
+      }
+    });
+    if (!response.ok) throw new Error("Failed to fetch surprise");
+    return await response.json(); // Yeh { movie_id: 1000xxx } dega
+  } catch (error) {
+    console.error("API Error in getSurpriseMovie:", error);
+    return null;
   }
 };

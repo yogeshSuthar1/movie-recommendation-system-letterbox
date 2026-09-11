@@ -1,31 +1,35 @@
+/* ==============================
+   1. GLOBAL RESET & BASE
+================================= */
 * {
   box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
 }
 
-/* ==============================
-   HOME PAGE BASE
-================================= */
 .home-page {
   width: 100%;
   min-height: 100vh;
-  background: #050507;
+  /* 🌟 Plain black hata kar ek Deep Cinematic Gradient lagaya hai */
+  background: radial-gradient(circle at 50% -10%, #2b1845 0%, #0d0914 40%, #050507 100%);
+  background-attachment: fixed;
   color: #ffffff;
   overflow-x: hidden;
   z-index: 1;
 }
 
 /* ==============================
-   HERO BANNER
+   2. HERO BANNER
 ================================= */
 .hero-banner {
   width: 100%;
-  min-height: 80vh;
+  min-height: 85vh;
   position: relative;
   display: flex;
   align-items: center;
   padding: 100px 50px 50px 50px;
   overflow: hidden;
-  z-index: 1;
 }
 
 .hero-bg {
@@ -33,7 +37,7 @@
   inset: -20px;
   background-size: cover;
   background-position: center 15%;
-  filter: blur(35px);
+  filter: blur(35px) brightness(0.6);
   z-index: 1;
   pointer-events: none;
   transition: background-image 0.8s ease-in-out;
@@ -45,13 +49,13 @@
   background: linear-gradient(
     to right,
     rgba(5, 5, 7, 1) 0%,
-    rgba(5, 5, 7, 0.8) 50%,
-    rgba(5, 5, 7, 0.3) 100%
+    rgba(5, 5, 7, 0.7) 50%,
+    rgba(5, 5, 7, 0.2) 100%
   ),
   linear-gradient(
     to top,
     #050507 0%,
-    transparent 20%
+    transparent 25%
   );
   z-index: 2;
   pointer-events: none;
@@ -81,9 +85,15 @@
   height: 480px;
   border-radius: 16px;
   overflow: hidden;
-  box-shadow: 0 25px 50px rgba(0, 0, 0, 0.9), 0 0 25px rgba(124, 58, 237, 0.3);
+  box-shadow: 0 25px 50px rgba(0, 0, 0, 0.9), 0 0 35px rgba(124, 58, 237, 0.3);
   border: 1px solid rgba(255, 255, 255, 0.15);
-  animation: fadeUp 1s ease-out;
+  animation: fadeUp 1.2s ease-out;
+  transition: transform 0.4s ease, box-shadow 0.4s ease;
+}
+
+.hero-poster-box:hover {
+  transform: translateY(-10px) scale(1.02);
+  box-shadow: 0 30px 60px rgba(0, 0, 0, 0.9), 0 0 45px rgba(168, 85, 247, 0.5);
 }
 
 .hero-poster-img {
@@ -97,10 +107,13 @@
   to { opacity: 1; transform: translateY(0); }
 }
 
+/* ==============================
+   3. HERO TYPOGRAPHY & META
+================================= */
 .hero-badge {
   display: inline-block;
-  background: rgba(155, 92, 255, 0.2);
-  color: #c08cff;
+  background: rgba(168, 85, 247, 0.15);
+  color: #d8b4fe;
   padding: 6px 14px;
   border-radius: 20px;
   font-size: 12px;
@@ -108,15 +121,16 @@
   letter-spacing: 1px;
   text-transform: uppercase;
   margin-bottom: 15px;
-  border: 1px solid rgba(155, 92, 255, 0.4);
+  border: 1px solid rgba(168, 85, 247, 0.4);
+  backdrop-filter: blur(5px);
 }
 
 .hero-title {
   font-size: 55px;
-  font-weight: 800;
+  font-weight: 900;
   line-height: 1.1;
   margin: 0 0 15px 0;
-  text-shadow: 2px 2px 15px rgba(0, 0, 0, 0.8);
+  text-shadow: 2px 2px 20px rgba(0, 0, 0, 0.9);
   letter-spacing: -1px;
 }
 
@@ -126,34 +140,38 @@
   gap: 18px;
   font-size: 15px;
   font-weight: 500;
-  color: #d1cdd8;
+  color: #e2e8f0;
   margin-bottom: 20px;
 }
 
 .hero-meta .rating {
-  color: #f5c518;
+  color: #fbbf24;
   font-weight: 700;
+  background: rgba(0,0,0,0.4);
+  padding: 4px 10px;
+  border-radius: 6px;
 }
 
 .hero-meta .quality {
-  border: 1px solid #777;
+  border: 1px solid #71717a;
   padding: 2px 6px;
   border-radius: 4px;
   font-size: 11px;
-  font-weight: 700;
-  color: #aaa;
+  font-weight: 800;
+  color: #d4d4d8;
+  letter-spacing: 1px;
 }
 
 .hero-overview {
   font-size: 16px;
-  line-height: 1.6;
-  color: #b0aabf;
-  margin-bottom: 30px;
-  text-shadow: 1px 1px 5px rgba(0, 0, 0, 0.8);
+  line-height: 1.7;
+  color: #a1a1aa;
+  margin-bottom: 35px;
+  text-shadow: 1px 1px 5px rgba(0, 0, 0, 0.9);
 }
 
 /* ==============================
-   HERO BUTTONS
+   4. HERO BUTTONS
 ================================= */
 .hero-actions {
   display: flex;
@@ -161,28 +179,28 @@
 }
 
 .btn-play {
-  background: linear-gradient(135deg, #7c3aed, #9b5cff);
+  background: linear-gradient(135deg, #7c3aed, #a855f7);
   color: white;
   border: none;
   padding: 14px 32px;
   font-size: 16px;
-  font-weight: 600;
+  font-weight: 700;
   border-radius: 12px;
   cursor: pointer;
   display: flex;
   align-items: center;
   gap: 10px;
-  transition: 0.3s ease;
-  box-shadow: 0 8px 25px rgba(124, 58, 237, 0.35);
+  transition: all 0.3s ease;
+  box-shadow: 0 8px 25px rgba(124, 58, 237, 0.4);
 }
 
 .btn-play:hover {
-  transform: translateY(-2px) scale(1.02);
-  box-shadow: 0 12px 30px rgba(124, 58, 237, 0.5);
+  transform: translateY(-3px) scale(1.02);
+  box-shadow: 0 15px 35px rgba(124, 58, 237, 0.6);
 }
 
 .btn-watchlist {
-  background: rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.05);
   color: white;
   border: 1px solid rgba(255, 255, 255, 0.2);
   padding: 14px 32px;
@@ -194,69 +212,66 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  transition: 0.3s ease;
+  transition: all 0.3s ease;
 }
 
 .btn-watchlist:hover {
   background: rgba(255, 255, 255, 0.15);
-  border-color: rgba(255, 255, 255, 0.4);
-  transform: translateY(-2px);
+  border-color: rgba(255, 255, 255, 0.5);
+  transform: translateY(-3px);
 }
 
 /* ==============================
-   MAIN CONTENT & ROWS
+   5. MAIN CONTENT & ROWS
 ================================= */
 .home-content {
   padding: 0 50px 80px 50px;
-  margin-top: -30px; 
+  margin-top: -40px; 
   position: relative;
   z-index: 10;
 }
 
 .movie-section {
-  margin-bottom: 45px;
+  margin-bottom: 50px;
 }
 
 .section-header {
   display: flex;
   justify-content: space-between;
-  align-items: center;
-  margin-bottom: 16px;
+  align-items: flex-end;
+  margin-bottom: 18px;
 }
 
 .section-header h2 {
-  font-size: 18px;
-  font-weight: 700;
-  letter-spacing: 1px;
-  color: #e5e5e5;
+  font-size: 19px;
+  font-weight: 800;
+  letter-spacing: 1.5px;
+  color: #f4f4f5;
   text-transform: uppercase;
 }
 
 .see-all {
-  background: transparent;
-  color: #a49eb0;
-  border: none;
-  font-size: 15px;
-  font-weight: 600;
-  cursor: pointer;
+  color: #a855f7;
+  text-decoration: none;
+  font-size: 14px;
+  font-weight: 700;
+  transition: all 0.3s ease;
   display: flex;
   align-items: center;
-  gap: 6px;
-  transition: all 0.3s ease;
-  padding: 8px 16px;
-  border-radius: 8px;
+  gap: 5px;
 }
 
 .see-all:hover {
-  color: #ffffff;
-  background: rgba(155, 92, 255, 0.15);
+  color: #d8b4fe;
+  text-decoration: underline;
+  transform: translateX(3px);
 }
 
 .movie-row {
   display: flex;
-  gap: 30px; 
+  gap: 85px; 
   overflow-x: auto;
-  padding: 15px 10px 30px 0;
+  padding: 20px 10px 40px 10px;
   scroll-behavior: smooth;
   -ms-overflow-style: none;  
   scrollbar-width: none;  
@@ -267,104 +282,175 @@
 }
 
 /* ==============================
-   MOVIE CARDS
+   6. MOVIE CARDS & HOVER EFFECTS
 ================================= */
 .movie-card {
-  flex: 0 0 300px; 
-  width: 300px;
+  flex: 0 0 240px; /* Standard poster size */
+  width: 240px;
   cursor: pointer;
-  transition: transform 0.3s ease;
+  text-decoration: none;
+  border-radius: 12px;
+  transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
 }
 
 .movie-poster-wrapper {
-  width: 300px; 
-  height: 450px; 
-  border-radius: 14px;
+  width: 120%; 
+  aspect-ratio: 2 / 3; /* Perfect poster proportions automatically */
+  border-radius: 12px;
   overflow: hidden;
   background: #18181d;
   position: relative;
-  border: 1px solid rgba(255, 255, 255, 0.05);
-  transition: all 0.3s ease;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 6px 15px rgba(0, 0, 0, 0.6);
+  transition: all 0.4s ease;
 }
 
 .movie-poster {
   width: 100%;
   height: 100%;
   object-fit: cover;
-  transition: transform 0.4s ease, filter 0.4s ease;
+  transition: transform 0.6s ease, filter 0.6s ease;
 }
 
-.movie-card:hover .movie-poster-wrapper {
-  transform: translateY(-10px); 
-  border-color: rgba(155, 92, 255, 0.6);
-  box-shadow: 0 12px 35px rgba(124, 58, 237, 0.45),
-              0 0 20px rgba(155, 92, 255, 0.25);
-}
-
-.movie-card:hover .movie-poster {
-  transform: scale(1.06);
-  filter: brightness(1.1);
+/* 🌟 NAYA: THE GRADIENT OVERLAY (Takes text inside the poster) */
+.movie-card-overlay {
+  position: absolute;
+  inset: 0; /* Covers the whole image */
+  background: linear-gradient(
+    to top,
+    rgba(5, 5, 7, 0.95) 0%,
+    rgba(5, 5, 7, 0.7) 25%,
+    transparent 50%
+  );
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end; /* Text ko bottom par rakhega */
+  padding: 20px 15px 15px 15px;
+  opacity: 0.9;
+  transition: all 0.4s ease;
 }
 
 .movie-info {
-  margin-top: 15px;
-  padding: 0 5px;
+  transform: translateY(8px); /* Normal state mein thoda neeche daba hua */
+  transition: transform 0.4s ease;
 }
 
-.movie-info h3 {
-  font-size: 17px; 
+.movie-title {
+  font-size: 18px; 
   font-weight: 600;
-  color: #fff;
-  white-space: nowrap;
+  color: #f8f8f8;
+  margin-bottom: 8px;
+  text-shadow: 2px 2px 6px rgba(0, 0, 0, 0.9);
+  
+  /* 🌟 Agar title lamba ho toh 2 lines ke baad '...' aa jayega */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
   overflow: hidden;
-  text-overflow: ellipsis;
+  line-height: 1.3;
 }
 
 .movie-meta {
   display: flex;
   align-items: center;
   gap: 12px;
-  margin-top: 8px;
-  font-size: 14px; 
-  color: #999;
+  font-size: 13px; 
+  font-weight: 700;
+  color: #d1cdd8;
+}
+
+.movie-meta .rating {
+  color: #fbbf24;
+  background: rgba(0, 0, 0, 0.6);
+  padding: 3px 8px;
+  border-radius: 6px;
+  backdrop-filter: blur(4px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+/* 🌟 THE HOVER MAGIC */
+.movie-card:hover {
+  transform: translateY(-12px) scale(1.04);
+  z-index: 10;
+}
+
+.movie-card:hover .movie-poster-wrapper {
+  border-color: rgba(168, 85, 247, 0.8);
+  box-shadow: 0 15px 35px rgba(124, 58, 237, 0.4), 
+              0 0 25px rgba(155, 92, 255, 0.3);
+}
+
+.movie-card:hover .movie-poster {
+  transform: scale(1.08); /* Image halki si zoom hogi */
+  filter: brightness(1.1);
+}
+
+/* Hover par gradient ka colour dark purplish ho jayega aur text upar slide karega */
+.movie-card:hover .movie-card-overlay {
+  opacity: 1;
+  background: linear-gradient(
+    to top,
+    rgba(30, 10, 45, 0.95) 0%, /* Dark Purple bottom */
+    rgba(20, 5, 30, 0.7) 35%,
+    transparent 65%
+  );
+}
+
+.movie-card:hover .movie-info {
+  transform: translateY(0); /* Text upar smoothly slide hokar aayega */
+}
+
+.movie-card:hover .movie-title {
+  color: #d8b4fe; /* Title glow karega */
 }
 
 /* ==============================
-   LOADING & ERRORS
+   7. "SEE MORE" CARD (AT ROW END)
 ================================= */
-.home-loading {
-  min-height: 100vh;
+/* ==============================
+   "SEE MORE" CARD (AT ROW END)
+================================= */
+.see-more-card {
+  flex: 0 0 240px; /* 🌟 Agar yeh nahi hoga toh box dab jayega */
+  height: 360px; 
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.02);
+  border-radius: 12px;
+  text-decoration: none;
+  color: #fff;
+  border: 2px dashed rgba(255, 255, 255, 0.15);
+  transition: all 0.3s ease;
+  margin-left: 15px; /* Movies aur is box ke beech ka gap */
+}
+
+.see-more-card:hover {
+  background: rgba(168, 85, 247, 0.1);
+  border-color: #a855f7;
+  transform: scale(1.03);
+  box-shadow: 0 0 20px rgba(168, 85, 247, 0.2) inset;
+}
+
+.see-more-content {
   display: flex;
   flex-direction: column;
-  gap: 20px;
   align-items: center;
-  justify-content: center;
-  background: #050507;
-  color: #9b5cff;
-  font-weight: 600;
-  font-size: 18px;
+  gap: 12px;
+}
+
+.see-more-icon {
+  font-size: 2.5rem;
+  color: #a855f7;
+  transition: transform 0.3s ease;
+}
+
+.see-more-card:hover .see-more-icon {
+  transform: translateX(10px);
+}
+
+.see-more-content p {
+  font-weight: 700;
   letter-spacing: 1px;
-}
-
-.loader {
-  width: 40px;
-  height: 40px;
-  border: 4px solid rgba(155, 92, 255, 0.2);
-  border-top-color: #9b5cff;
-  border-radius: 50%;
-  animation: spin 1s linear infinite;
-}
-
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
-
-.home-error {
-  min-height: 100vh;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: #050507;
-  color: #ff4757;
-  font-size: 18px;
+  color: #d8b4fe;
 }

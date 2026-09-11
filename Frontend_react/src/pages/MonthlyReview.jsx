@@ -4,6 +4,7 @@ import { getUserProfile } from "../services/homeService";
 import Navbar from "../components/Navbar";
 import SearchModal from "../components/SearchModal";
 import "../styles/monthlyReview.css";
+import CinematicLoader from "../components/CinematicLoader";
 
 export default function MonthlyReview() {
   const [currentDate, setCurrentDate] = useState(new Date());

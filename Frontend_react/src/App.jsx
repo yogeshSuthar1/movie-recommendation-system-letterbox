@@ -7,6 +7,7 @@ import Profile from './pages/profile';
 import MonthlyReview from './pages/MonthlyReview';
 import Watchlist from './pages/Watchlist';
 import ActorProfile from "./pages/ActorProfile";
+import ExploreMovies from "./pages/ExploreMovies";
 
 
 import {
@@ -15,7 +16,7 @@ import {
   Route
 } from "react-router-dom";
 
-import Login from "./pages/Login";
+import Login from "./pages/login";
 
 
 function App() {
@@ -51,6 +52,7 @@ function App() {
         <Route path="/monthly-review" element={<MonthlyReview />} />
         <Route path="/watchlist" element={<Watchlist />} />
         <Route path="/actor/:actorName" element={<ActorProfile />} />
+        <Route path="/explore" element={<ExploreMovies />} />
         
 
       </Routes>

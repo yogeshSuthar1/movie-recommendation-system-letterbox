@@ -1,9 +1,9 @@
 import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { getHomeData } from "../services/homeService";
 import MovieRow from "../components/MovieRow";
 import SearchModal from "../components/SearchModal"; 
 import Navbar from "../components/Navbar";
+import CinematicLoader from "../components/CinematicLoader";
 import "../styles/home.css";
 
 export default function Home() {
@@ -26,19 +26,39 @@ export default function Home() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, []);
 
+  // Fetch Home Data with Caching
+ // 🌟 PURI TARAH SE CACHING HATA DI HAI - HAR REFRESH PAR SHUFFLE HOGA
   useEffect(() => {
-    const loadHome = async () => {
+    const fetchHomeData = async () => {
       try {
-        const data = await getHomeData();
-        setHomeData(data);
-      } catch (err) {
-        console.error("HOME ERROR:", err);
-        setError(err.message);
+        setLoading(true); 
+        
+        const res = await fetch("http://127.0.0.1:5000/home", {
+          method: "GET",
+          cache: "no-store", // 🌟 YEH LINE BROWSER CACHE KO ROKEGI
+          headers: {
+            "Authorization": `Bearer ${localStorage.getItem("token")}`,
+            "Pragma": "no-cache",
+            "Cache-Control": "no-cache"
+          }
+        });
+        
+        if (res.ok) {
+          const data = await res.json();
+          setHomeData(data); 
+        } else {
+          const errData = await res.json();
+          setError(errData.error || "Failed to fetch data");
+        }
+      } catch (error) {
+        console.error("Home load error:", error);
+        setError("Network Error. Is Flask running?");
       } finally {
         setLoading(false);
       }
     };
-    loadHome();
+
+    fetchHomeData();
   }, []);
 
   // Auto-Rotate Hero Banner every 3.5 seconds
@@ -53,14 +73,9 @@ export default function Home() {
     }
   }, [homeData]);
 
-  if (loading) {
-    return (
-      <div className="home-loading">
-        <div className="loader"></div>
-        <p>Loading MovieVerse...</p>
-      </div>
-    );
-  }
+  if (loading) 
+    return <CinematicLoader />;
+  
 
   if (error) {
     return <div className="home-error">Failed to load home: {error}</div>;
@@ -120,14 +135,53 @@ export default function Home() {
         </div>
       )}
 
+      
       {/* ================= MAIN CONTENT ================= */}
       <main className="home-content">
-        <MovieRow title="NEW RELEASES" movies={homeData.new_releases} />
-        <MovieRow title="RECOMMENDED FOR YOU" movies={homeData.recommended_for_you} />
-        <MovieRow title="ALL TIME TOP RATED" movies={homeData.top_rated} />
-        {homeData.genre_sections.map((section) => (
-          <MovieRow key={section.genre} title={`TOP IN ${section.genre.toUpperCase()}`} movies={section.movies} />
+        
+        {homeData?.because_you_love?.length > 0 && homeData?.dynamic_genre_name && (
+          <MovieRow 
+            title={`BECAUSE YOU LOVE ${homeData.dynamic_genre_name.toUpperCase()}`} 
+            movies={homeData.because_you_love} 
+            seeMoreLink={`/explore?genre=${homeData.dynamic_genre_name}`}
+          />
+        )}
+
+        <MovieRow 
+          title="NEW RELEASES" 
+          movies={homeData?.new_releases || []} 
+          seeMoreLink="/explore?sort_v=Newest"
+        />
+        
+        {homeData?.hidden_gems?.length > 0 && (
+          <MovieRow 
+            title=" HIDDEN GEMS" 
+            movies={homeData.hidden_gems} 
+            seeMoreLink="/explore?sort_by=Top Rated"
+          />
+        )}
+
+        <MovieRow 
+          title="RECOMMENDED FOR YOU" 
+          movies={homeData?.recommended_for_you || []} 
+          seeMoreLink="/explore"
+        />
+        
+        <MovieRow 
+          title="ALL TIME TOP RATED" 
+          movies={homeData?.top_rated || []} 
+          seeMoreLink="/explore?sort_by=Top Rated"
+        />
+        
+        {homeData?.genre_sections?.map((section) => (
+          <MovieRow 
+            key={section.genre} 
+            title={`TOP IN ${section.genre.toUpperCase()}`} 
+            movies={section.movies} 
+            seeMoreLink={`/explore?genre=${section.genre}`}
+          />
         ))}
+
       </main>
     </div>
   );

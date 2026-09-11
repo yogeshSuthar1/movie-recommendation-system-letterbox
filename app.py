@@ -14,6 +14,7 @@ from backend.routes.home import home_bp
 from backend.routes.collections import collections_bp
 
 
+
 app = Flask(__name__)
 CORS(app)
 

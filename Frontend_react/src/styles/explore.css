@@ -1,0 +1,465 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+.explore-wrapper {
+  min-height: 100vh;
+  background-color: #050507; /* Deep cinematic black */
+  color: #fff;
+  font-family: 'Inter', sans-serif;
+}
+
+.explore-layout {
+  display: flex;
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 30px 20px;
+  gap: 40px;
+  align-items: flex-start;
+  animation: fadeIn 0.5s ease-out;
+}
+
+/* --- PREMUM SIDEBAR --- */
+.explore-sidebar {
+  flex: 0 0 280px;
+  position: sticky;
+  top: 90px;
+  background: rgba(18, 18, 22, 0.6);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 16px;
+  height: calc(100vh - 120px); /* Fit to screen height */
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.filter-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 25px 25px 15px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.filter-header h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.filter-header h3 span {
+  font-size: 10px;
+  background: #9b5cff;
+  color: #fff;
+  padding: 2px 6px;
+  border-radius: 10px;
+  text-transform: uppercase;
+}
+
+.clear-btn {
+  background: transparent;
+  border: none;
+  color: #666;
+  font-size: 12px;
+  cursor: pointer;
+  transition: color 0.2s;
+  font-weight: 500;
+}
+
+.clear-btn:hover { color: #ff4757; }
+
+/* Custom Scrollbar for Sidebar */
+.filter-scroll-area {
+  padding: 25px;
+  overflow-y: auto;
+  flex: 1;
+}
+.filter-scroll-area::-webkit-scrollbar { width: 4px; }
+.filter-scroll-area::-webkit-scrollbar-track { background: transparent; }
+.filter-scroll-area::-webkit-scrollbar-thumb { background: #333; border-radius: 4px; }
+
+/* Filter Inputs */
+.filter-section { margin-bottom: 30px; }
+
+.filter-section label {
+  display: block;
+  font-size: 11px;
+  color: #888;
+  font-weight: 600;
+  letter-spacing: 1.5px;
+  margin-bottom: 12px;
+}
+
+/* Custom Select Dropdowns */
+.custom-select-wrapper {
+  position: relative;
+}
+.custom-select-wrapper::after {
+  content: '▼';
+  font-size: 10px;
+  color: #888;
+  position: absolute;
+  right: 15px;
+  top: 50%;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+.filter-select {
+  appearance: none;
+  width: 100%;
+  background: #111114;
+  color: #ddd;
+  border: 1px solid #222;
+  padding: 12px 15px;
+  border-radius: 8px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: border-color 0.3s;
+}
+.filter-select:focus {
+  outline: none;
+  border-color: #9b5cff;
+}
+
+/* Badges (Genre) */
+.genre-badges-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.filter-badge {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: #111114;
+  border: 1px solid #222;
+  color: #aaa;
+  padding: 8px 14px;
+  border-radius: 8px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.filter-badge:hover {
+  background: #1a1a20;
+  color: #fff;
+}
+
+.filter-badge.active {
+  background: rgba(155, 92, 255, 0.1);
+  border-color: #9b5cff;
+  color: #fff;
+  box-shadow: 0 0 15px rgba(155, 92, 255, 0.15);
+}
+
+.active-dot {
+  width: 6px;
+  height: 6px;
+  background: #9b5cff;
+  border-radius: 50%;
+  box-shadow: 0 0 8px #9b5cff;
+}
+
+/* Duration Pills */
+.duration-pills {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.dur-pill {
+  background: #111114;
+  border: 1px solid #222;
+  color: #888;
+  padding: 10px;
+  border-radius: 8px;
+  font-size: 11px;
+  cursor: pointer;
+  transition: 0.2s;
+}
+.dur-pill.active {
+  background: #fff;
+  color: #000;
+  font-weight: 600;
+}
+
+/* --- MAIN GRID AREA --- */
+.explore-main { 
+  flex: 1;
+  margin-top: 60px; }
+
+.active-tags-bar {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 25px;
+  flex-wrap: wrap;
+}
+
+.glow-tag {
+  background: linear-gradient(135deg, rgba(155, 92, 255, 0.2), rgba(71, 184, 255, 0.2));
+  border: 1px solid rgba(155, 92, 255, 0.5);
+  color: #e5d4ff;
+  padding: 6px 14px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 500;
+  box-shadow: 0 0 10px rgba(155, 92, 255, 0.1);
+}
+
+.plain-tag {
+  color: #888;
+  font-size: 12px;
+  padding: 6px 14px;
+  border: 1px solid #333;
+  border-radius: 20px;
+}
+
+/* Premium Grid */
+.premium-movie-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 25px;
+}
+
+.premium-movie-card {
+  text-decoration: none;
+  color: #fff;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  group: hover;
+  animation: scaleUp 0.4s ease-out backwards;
+}
+
+/* Image Wrapper with Hover Magic */
+.card-img-wrapper {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 2/3;
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 10px 20px rgba(0,0,0,0.5);
+}
+
+.card-img-wrapper img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: transform 0.5s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+}
+
+.premium-movie-card:hover .card-img-wrapper img {
+  transform: scale(1.1);
+}
+
+/* Gradient Overlay & Play Button */
+.card-overlay {
+  position: absolute;
+  top: 0; left: 0; width: 100%; height: 100%;
+  background: linear-gradient(to top, rgba(0,0,0,0.9) 0%, rgba(0,0,0,0.2) 50%, rgba(0,0,0,0) 100%);
+  opacity: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: opacity 0.3s ease;
+}
+
+.premium-movie-card:hover .card-overlay {
+  opacity: 1;
+}
+
+.play-btn {
+  background: rgba(255,255,255,0.2);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255,255,255,0.5);
+  width: 45px; height: 45px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  color: #fff;
+  transform: translateY(20px);
+  transition: transform 0.3s ease;
+}
+
+.premium-movie-card:hover .play-btn {
+  transform: translateY(0);
+}
+
+/* Rating Badge */
+.rating-badge {
+  position: absolute;
+  top: 10px; right: 10px;
+  background: rgba(0,0,0,0.7);
+  backdrop-filter: blur(5px);
+  color: #f5c518;
+  font-weight: 600;
+  font-size: 12px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  border: 1px solid rgba(255,255,255,0.1);
+}
+
+/* Info text */
+.card-info h4 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.card-info p {
+  margin: 4px 0 0 0;
+  font-size: 12px;
+  color: #888;
+}
+
+/* --- LOADERS & MESSAGES --- */
+.ex-loader {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 40px;
+  color: #9b5cff;
+  font-size: 14px;
+}
+.spinner {
+  width: 30px; height: 30px;
+  border: 3px solid rgba(155, 92, 255, 0.2);
+  border-top-color: #9b5cff;
+  border-radius: 50%;
+  animation: spin 1s infinite linear;
+  margin-bottom: 10px;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes scaleUp { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: scale(1); } }
+
+.end-msg, .empty-state {
+  text-align: center;
+  padding: 40px;
+  color: #888;
+  font-size: 15px;
+}
+
+/* ==============================
+   SIMPLE SURPRISE ME BUTTON
+================================= */
+.surprise-me-box-container {
+  margin-top: 30px;
+  margin-bottom: 20px;
+  width: 100%;
+}
+
+.btn-surprise-me-simple {
+  width: 100%;
+  background-color: rgba(155, 92, 255, 0.1); /* Halka transparent purple */
+  color: #9b5cff; /* Tera theme wala original purple */
+  border: 1px solid rgba(155, 92, 255, 0.4);
+  padding: 12px 0; /* Height ekdum normal kar di */
+  border-radius: 8px; /* Clean edges */
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.btn-surprise-me-simple:hover {
+  background-color: #9b5cff; /* Hover karne par poora purple ban jayega */
+  color: #fff;
+  box-shadow: 0 4px 15px rgba(155, 92, 255, 0.3); /* Halka sa glow */
+}
+
+.btn-surprise-me-simple:active {
+  transform: scale(0.97); /* Click karne par halke se dabega */
+}
+
+/* ==============================
+   SURPRISE RESULT MINI CARD
+================================= */
+.surprise-result-card {
+  margin-top: 15px;
+  background: rgba(155, 92, 255, 0.08);
+  border: 1px solid rgba(155, 92, 255, 0.3);
+  border-radius: 10px;
+  padding: 12px;
+  display: flex;
+  gap: 12px;
+  position: relative;
+  animation: slideDownFade 0.4s ease;
+}
+
+.surprise-poster {
+  width: 65px;
+  height: 95px;
+  border-radius: 6px;
+  object-fit: cover;
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.5);
+}
+
+.surprise-info {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  flex: 1;
+}
+
+.surprise-info h4 {
+  margin: 0 0 4px 0;
+  font-size: 14px;
+  color: #fff;
+  line-height: 1.3;
+}
+
+.surprise-info p {
+  margin: 0 0 10px 0;
+  font-size: 12px;
+  color: #aaa;
+}
+
+.btn-view-surprise {
+  background: #9b5cff;
+  color: #fff;
+  text-decoration: none;
+  padding: 6px 10px;
+  border-radius: 4px;
+  font-size: 12px;
+  text-align: center;
+  font-weight: 600;
+  transition: all 0.2s ease;
+}
+
+.btn-view-surprise:hover {
+  background: #7a3edb;
+  box-shadow: 0 2px 8px rgba(155, 92, 255, 0.4);
+}
+
+.close-surprise {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  background: transparent;
+  border: none;
+  color: #888;
+  cursor: pointer;
+  font-size: 14px;
+  padding: 4px;
+}
+
+.close-surprise:hover {
+  color: #fff;
+}
+
+@keyframes slideDownFade {
+  from { opacity: 0; transform: translateY(-10px); }
+  to { opacity: 1; transform: translateY(0); }
+}

@@ -234,3 +234,26 @@ def get_following_list(user_id):
         """)
         results = [dict(row) for row in conn.execute(query, {"uid": user_id}).mappings().all()]
     return jsonify(results), 200
+
+@profile_bp.route("/user/<int:user_id>/reviews", methods=["GET"])
+def get_user_reviews(user_id):
+    with engine.connect() as conn:
+        query = text("""
+            SELECT 
+                r.review_id, 
+                r.movie_id, 
+                r.review_text, 
+                r.rating, 
+                r.likes, 
+                r.created_at,
+                m.title as movie_title, 
+                m.poster_url, 
+                m.release_year,
+                (SELECT COUNT(*) FROM review_comments rc WHERE rc.review_id = r.review_id) as comment_count
+            FROM reviews r
+            JOIN movies m ON r.movie_id = m.movie_id
+            WHERE r.user_id = :uid
+            ORDER BY r.created_at DESC
+        """)
+        results = [dict(row) for row in conn.execute(query, {"uid": user_id}).mappings().all()]
+    return jsonify(results), 200

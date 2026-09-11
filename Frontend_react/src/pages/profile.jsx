@@ -10,11 +10,12 @@ import {
   getCollectionDetails, 
   toggleFollowUser, 
   getUserFollowStats,
-  updateUserProfile,
+  getUserReviews,
   getFollowersList, 
   getFollowingList
 } from "../services/homeService";
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, Tooltip, ResponsiveContainer } from "recharts";
+import CinematicLoader from "../components/CinematicLoader";
 import "../styles/profile.css"; 
 
 export default function Profile() {
@@ -58,13 +59,15 @@ export default function Profile() {
   const [isSearchOpen, setIsSearchOpen] = useState(false);
 
   const [showFollowModal, setShowFollowModal] = useState(false);
-  const [followModalType, setFollowModalType] = useState(""); // "followers" ya "following"
+  const [followModalType, setFollowModalType] = useState(""); 
   const [followListData, setFollowListData] = useState([]);
+
+  const [revealedSpoilers, setRevealedSpoilers] = useState({});
 
   const handleOpenFollowModal = async (type) => {
     setFollowModalType(type);
     setShowFollowModal(true);
-    setFollowListData([]); // Purana data clear karne ke liye
+    setFollowListData([]); 
 
     if (type === "followers") {
       const data = await getFollowersList(id);
@@ -79,13 +82,19 @@ export default function Profile() {
     window.scrollTo(0, 0);
     const fetchData = async () => {
       setLoading(true);
-      const [pData, aData, cData, sData] = await Promise.all([
+      const [pData, aData, cData, sData, rData] = await Promise.all([
         getUserProfile(id),
         getUserAnalytics(id),
         getUserCollections(id),
-        getUserFollowStats(id)
+        getUserFollowStats(id),
+        getUserReviews(id)
       ]);
-      setProfileData(pData);
+      
+      setProfileData({
+        ...(pData || {}),
+        reviews: rData || []
+      });
+
       if (aData) setAnalyticsData(aData);
       if (cData) setCollections(cData);
       if (sData) setFollowStats(sData);
@@ -126,11 +135,7 @@ export default function Profile() {
   };
 
   const handleSaveProfile = async (e) => {
-    e.preventDefault(); // Page refresh roko
-    
-    // 🌟 FIX: editBioText ko editBio se replace kar diya hai
-    console.log("Saving bio for user:", id, "Bio text:", editBio); 
-
+    e.preventDefault(); 
     try {
       const res = await fetch("http://127.0.0.1:5000/user/edit", {
         method: "POST",
@@ -139,25 +144,25 @@ export default function Profile() {
         },
         body: JSON.stringify({ 
           user_id: id, 
-          bio: editBio // 🌟 FIX
+          username: editUsername,
+          bio: editBio 
         })
       });
 
       if (res.ok) {
-        // Success!
         setProfileData((prev) => ({
           ...prev,
-          user: { ...prev.user, bio: editBio, username: editUsername } // 🌟 FIX
+          user: { ...prev.user, bio: editBio, username: editUsername } 
         }));
-        alert("Profile is saved! 🎉");
+        alert("Profile saved successfully! 🎉");
         setShowEditModal(false);
       } else {
         const errData = await res.json();
-        alert(`Backend Error: ${errData.error || 'Failed to save bio'}`);
+        alert(`Backend Error: ${errData.error || 'Failed to save profile'}`);
       }
     } catch (error) {
       console.error("Save profile crash:", error);
-      alert("Code crash ho gaya! F12 daba ke Console tab mein red error check kar.");
+      alert("Code crash ho gaya! Check console for errors.");
     }
   };
 
@@ -192,7 +197,7 @@ export default function Profile() {
     }
   };
 
-  if (loading) return <h1 className="loading-text">Loading Profile...</h1>;
+  if (loading) return <CinematicLoader />;
   if (!profileData || !profileData.user) return <h1 className="error-text">❌ User Not Found</h1>;
 
   const filteredReviews = getFilteredReviews();
@@ -208,16 +213,9 @@ export default function Profile() {
             <h2 className="pc-fullname">{profileData.user.username}</h2>
             <span className="pc-username">@{profileData.user.username.toLowerCase().replace(/\s/g, '_')}</span>
             
-            {/* Bio Display */}
-            {profileData.user.bio && (
-              <p style={{ color: "#aaa", fontSize: "13px", textAlign: "center", margin: "10px 0", fontStyle: "italic" }}>
-                "{profileData.user.bio}"
-              </p>
-            )}
-            
             <div className="pc-stats-row">
               <div className="pc-stat-box">
-                <h3>{profileData.total_reviews}</h3>
+                <h3>{profileData.reviews?.length || 0}</h3>
                 <p>Reviews<br/>Posted</p>
               </div>
               <div className="pc-stat-box">
@@ -325,23 +323,51 @@ export default function Profile() {
                         
                         <div className="pr-list-content">
                           <div className="pr-list-header">
-                            <Link to={`/movie/${review.movie_id}`} className="pr-title">{review.title}</Link>
+                            <Link to={`/movie/${review.movie_id}`} className="pr-title">{review.movie_title || review.title}</Link>
                             <span className={`pr-badge ${badge.class}`}>{badge.text}</span>
                           </div>
                           
                           <div className="pr-meta">
-                            Movie • {new Date(review.created_at).getFullYear() || "2024"} • 
+                            Movie • {review.release_year || "2024"} • 
                             <span className="pr-star-display">
                               {" ★".repeat(Math.floor(review.rating || 0))}
                               {(review.rating || 0) % 1 !== 0 ? " ½" : ""}
                             </span>
                           </div>
                           
-                          <p className="pr-review-text">{review.review_text}</p>
+                          {/* 🌟 Profile par Spoiler Blur Logic */}
+                          <div style={{ position: 'relative', marginBottom: '10px' }}>
+                            <p 
+                              className="pr-review-text" 
+                              onClick={() => {
+                                if (review.is_spoiler && !revealedSpoilers[review.review_id]) {
+                                  setRevealedSpoilers(prev => ({ ...prev, [review.review_id]: true }));
+                                }
+                              }}
+                              style={{
+                                filter: review.is_spoiler && !revealedSpoilers[review.review_id] ? "blur(5px)" : "none",
+                                cursor: review.is_spoiler && !revealedSpoilers[review.review_id] ? "pointer" : "text",
+                                userSelect: review.is_spoiler && !revealedSpoilers[review.review_id] ? "none" : "auto",
+                                transition: "filter 0.3s ease",
+                                margin: 0
+                              }}
+                            >
+                              {review.review_text}
+                            </p>
+                            
+                            {review.is_spoiler && !revealedSpoilers[review.review_id] && (
+                              <div 
+                                onClick={() => setRevealedSpoilers(prev => ({ ...prev, [review.review_id]: true }))}
+                                style={{ position: 'absolute', top: '50%', left: '0', transform: 'translateY(-50%)', background: 'rgba(0,0,0,0.7)', padding: '4px 12px', borderRadius: '4px', color: '#ff4d4d', fontSize: '13px', cursor: 'pointer', fontWeight: 'bold', border: '1px solid #ff4d4d' }}
+                              >
+                                ⚠️ Contains Spoilers. Click to reveal.
+                              </div>
+                            )}
+                          </div>
                           
-                          <div className="pr-actions">
+                          <div className="pr-actions" style={{ display: "flex", gap: "15px", marginTop: "10px" }}>
                             <span className="pr-action-btn">❤️ {review.likes || 0}</span>
-                            <span className="pr-action-btn">💬 0</span>
+                            <span className="pr-action-btn">💬 {review.comment_count || 0}</span>
                           </div>
                         </div>
                       </div>
@@ -508,7 +534,7 @@ export default function Profile() {
         </div>
       )}
 
-      {/* EDIT PROFILE MODAL (Username & Bio) */}
+      {/* EDIT PROFILE MODAL */}
       {showEditModal && (
         <div className="modal-overlay" onClick={() => setShowEditModal(false)}>
           <div className="col-modal-content" style={{ maxWidth: "400px" }} onClick={(e) => e.stopPropagation()}>
@@ -559,7 +585,6 @@ export default function Profile() {
                     key={user.user_id} 
                     onClick={() => {
                       setShowFollowModal(false);
-                      // Page force reload to load new user profile instantly
                       setTimeout(() => window.location.reload(), 100);
                     }}
                     style={{ 

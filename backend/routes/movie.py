@@ -1,4 +1,4 @@
-from flask import Blueprint, jsonify
+from flask import Blueprint, jsonify, request
 from sqlalchemy import text
 from backend.database import engine
 from backend.services.recommender import recommend
@@ -10,7 +10,7 @@ movie_bp = Blueprint("movie", __name__)
 def get_movie_detail(movie_id):
     try:
         with engine.connect() as conn:
-            # 1. Fetch Basic Movie Info
+            # 1. Fetch Basic Movie Info (FIXED: Main movie fetch without recommendation filters)
             movie_query = text("""
                 SELECT movie_id, title, release_year, runtime_minutes, overview, avg_rating, poster_url 
                 FROM movies 
@@ -59,16 +59,35 @@ def get_movie_detail(movie_id):
             similar_movies = []
             
             # A. Try fetching recommendations from YOUR ML Model using Movie Title
-            ml_df = recommend(movie_dict['title'], start=0, limit=12)
+            ml_df = recommend(movie_dict['title'], start=0, limit=15)
             
             if ml_df is not None and not ml_df.empty:
                 print(f"🎯 ML Recommendations triggered for {movie_dict['title']}")
-                # Convert Pandas DataFrame directly to list of dictionaries for JSON
-                similar_movies = ml_df.to_dict(orient="records")
+                ml_ids = ml_df['movie_id'].tolist()
                 
-            # B. If ML returns nothing (Cold Start/Title Mismatch), Fallback to SQL
-            elif movie_dict['genres']:
-                print(f"⚠️ ML failed, falling back to SQL for {movie_dict['title']}")
+                if ml_ids:
+                    # ML model se aayi IDs ko SQL mein daal kar kachra (0 rating, bad posters) filter out karna
+                    format_strings = ','.join(map(str, ml_ids))
+                    valid_recs_query = text(f"""
+                        SELECT movie_id, title, poster_url, avg_rating
+                        FROM movies
+                        WHERE movie_id IN ({format_strings})
+                        AND movie_id != :movie_id
+                        AND release_year <= YEAR(CURDATE())  -- Future movies hata dega
+                        AND avg_rating > 0                   -- 0 rating wali hata dega
+                        AND poster_url IS NOT NULL           -- Tute hue posters hata dega
+                        AND poster_url != ''
+                    """)
+                    
+                    valid_recs = [dict(row) for row in conn.execute(valid_recs_query, {"movie_id": movie_id}).mappings().all()]
+                    
+                    # ML ne jis order mein movies di thi, wahi ranking order maintain karna
+                    valid_recs_dict = {rec['movie_id']: rec for rec in valid_recs}
+                    similar_movies = [valid_recs_dict[ml_id] for ml_id in ml_ids if ml_id in valid_recs_dict]
+                
+            # B. If ML returns nothing OR saari ML movies filter out ho gayi, Fallback to SQL
+            if not similar_movies and movie_dict['genres']:
+                print(f"⚠️ ML failed or filtered out, falling back to SQL for {movie_dict['title']}")
                 sim_query = text("""
                     SELECT m.movie_id, m.title, m.poster_url, m.avg_rating, COUNT(mg.genre_id) as shared_genres
                     FROM movies m
@@ -77,10 +96,13 @@ def get_movie_detail(movie_id):
                         SELECT genre_id FROM movie_genres WHERE movie_id = :movie_id
                     )
                     AND m.movie_id != :movie_id
-                    AND m.poster_url IS NOT NULL
+                    AND m.release_year <= YEAR(CURDATE())  -- Strict Filter
+                    AND m.avg_rating > 0                   -- Strict Filter
+                    AND m.poster_url IS NOT NULL           -- Strict Filter
+                    AND m.poster_url != ''
                     GROUP BY m.movie_id, m.title, m.poster_url, m.avg_rating, m.release_year
-                    ORDER BY shared_genres DESC, m.release_year DESC
-                    LIMIT 4
+                    ORDER BY shared_genres DESC, m.avg_rating DESC
+                    LIMIT 8
                 """)
                 similar_movies = [dict(row) for row in conn.execute(sim_query, {"movie_id": movie_id}).mappings().all()]
             
@@ -98,17 +120,35 @@ def get_actor_movies(actor_name):
     # 'as Barbie' ya extra text hataane ke liye sirf main naam le lo
     clean_actor_name = actor_name.split(" as ")[0].strip()
 
+    # 🌟 NAYA: URL parameters se page aur sort method nikalna
+    page = request.args.get('page', 1, type=int)
+    sort_by = request.args.get('sort_by', 'year') # Default sort 'year' hoga
+    
+    limit = 20
+    offset = (page - 1) * limit
+
+    # Sorting Logic
+    order_clause = "ORDER BY m.release_year DESC"
+    if sort_by == 'rating':
+        order_clause = "ORDER BY m.avg_rating DESC, m.release_year DESC"
+
     with engine.connect() as conn:
-        movies = conn.execute(
-            text("""
-                SELECT DISTINCT m.movie_id, m.title, m.release_year, m.avg_rating, m.poster_url 
-                FROM movies m
-                JOIN movie_actors ma ON m.movie_id = ma.movie_id
-                JOIN actors a ON ma.actor_id = a.actor_id
-                WHERE a.actor_name LIKE :actor
-                LIMIT 20
-            """),
-            {"actor": f"%{clean_actor_name}%"}
-        ).mappings().all()
+        query = text(f"""
+            SELECT DISTINCT m.movie_id, m.title, m.release_year, m.avg_rating, m.poster_url 
+            FROM movies m
+            JOIN movie_actors ma ON m.movie_id = ma.movie_id
+            JOIN actors a ON ma.actor_id = a.actor_id
+            WHERE a.actor_name LIKE :actor
+            AND m.poster_url IS NOT NULL 
+            AND m.poster_url != ''
+            {order_clause}
+            LIMIT :limit OFFSET :offset
+        """)
+        
+        movies = conn.execute(query, {
+            "actor": f"%{clean_actor_name}%",
+            "limit": limit,
+            "offset": offset
+        }).mappings().all()
 
     return jsonify([dict(m) for m in movies]), 200

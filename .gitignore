@@ -30,3 +30,6 @@ __pycache__/
 # Environment
 .venv/
 venv/
+
+.env
+__pycache__/

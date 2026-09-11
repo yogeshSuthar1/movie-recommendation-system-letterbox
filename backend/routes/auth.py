@@ -92,7 +92,7 @@ def login():
             "error": "Email and password are required"
         }), 400
 
-    # Get user from database
+    # Get user from database & check if they have selected genres
     with engine.connect() as conn:
 
         user = conn.execute(
@@ -110,11 +110,23 @@ def login():
             {"email": email}
         ).mappings().first()
 
-    # User not found
-    if user is None:
-        return jsonify({
-            "error": "Invalid email or password"
-        }), 401
+        # User not found
+        if user is None:
+            return jsonify({
+                "error": "Invalid email or password"
+            }), 401
+
+        # 🌟 FIXED: Checked 'user_preference' table instead of 'user_genres'
+        genre_check = conn.execute(
+            text("""
+                SELECT COUNT(*) as count 
+                FROM user_preference 
+                WHERE user_id = :user_id
+            """),
+            {"user_id": user["user_id"]}
+        ).mappings().first()
+
+        has_genres = genre_check["count"] > 0
 
     # Verify password
     password_valid = bcrypt.checkpw(
@@ -140,6 +152,7 @@ def login():
     return jsonify({
         "message": "Login successful",
         "token": token,
+        "has_genres": has_genres,  # 🌟 Frontend ko bhej rahe hain redirect control karne ke liye
         "user": {
             "user_id": user["user_id"],
             "username": user["username"],
@@ -148,7 +161,6 @@ def login():
             "bio": user["bio"]
         }
     }), 200
-
 
 @auth_bp.route("/change-password", methods=["PUT"])
 @token_required
