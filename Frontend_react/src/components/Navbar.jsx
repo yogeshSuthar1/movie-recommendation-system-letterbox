@@ -1,147 +1,255 @@
 import React, { useState, useEffect, useRef } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import "../styles/navbar.css"; // 🔥 Apni CSS file ka path theek kar lena
 
 export default function Navbar({ onOpenSearch }) {
   const navigate = useNavigate();
   const userId = localStorage.getItem("user_id");
   const username = localStorage.getItem("username");
+  const token = localStorage.getItem("token"); 
   
-  const [hoveredTab, setHoveredTab] = useState(null);
+  // 🧹 Yahan se humne Hover wala state hata diya hai!
+
   const [showDropdown, setShowDropdown] = useState(false);
   const dropdownRef = useRef(null);
 
-  // Close dropdown when clicking outside
+  const [notifications, setNotifications] = useState([]);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [showNotifDropdown, setShowNotifDropdown] = useState(false);
+  const notifDropdownRef = useRef(null);
+
+  const formatNotifDate = (dateString) => {
+    const date = new Date(dateString);
+    const day = date.getDate();
+    const month = date.toLocaleString('default', { month: 'long' });
+    const suffix = (day % 10 === 1 && day !== 11) ? 'st' :
+                   (day % 10 === 2 && day !== 12) ? 'nd' :
+                   (day % 10 === 3 && day !== 13) ? 'rd' : 'th';
+    return `${day}${suffix} ${month}`;
+  };
+
+  const formatMessage = (msg) => {
+    if (msg.startsWith('@')) {
+      const firstSpace = msg.indexOf(' ');
+      const username = msg.substring(1, firstSpace); // without @
+      const restOfMsg = msg.substring(firstSpace);
+      return <span style={{ color: "#aaa" }}><strong style={{ color: "#fff" }}>{username}</strong>{restOfMsg}</span>;
+    }
+    return <span style={{ color: "#aaa" }}>{msg}</span>;
+  };
+
   useEffect(() => {
     const handleClickOutside = (event) => {
       if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
         setShowDropdown(false);
+      }
+      if (notifDropdownRef.current && !notifDropdownRef.current.contains(event.target)) {
+        setShowNotifDropdown(false);
       }
     };
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  const handleLogout = () => {
-    localStorage.clear();
-    navigate("/login"); // Ya jo bhi tera login route ho
+  useEffect(() => {
+    if (userId && token) fetchNotifications();
+  }, [userId, token]);
+
+  const fetchNotifications = async () => {
+    try {
+      const res = await fetch("http://127.0.0.1:5000/notifications", {
+        headers: { 
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}` 
+        }
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setNotifications(data.notifications);
+        setUnreadCount(data.unread_count);
+      }
+    } catch (e) {
+      console.error("Failed to fetch notifications:", e);
+    }
   };
 
-  const getNavItemStyle = (tabName) => ({
-    display: "flex",
-    alignItems: "center",
-    gap: hoveredTab === tabName ? "8px" : "0px",
-    background: hoveredTab === tabName ? "rgba(155, 92, 255, 0.15)" : "transparent",
-    padding: "8px 14px",
-    borderRadius: "10px",
-    color: hoveredTab === tabName ? "#fff" : "#aaa",
-    textDecoration: "none",
-    fontSize: "14px",
-    fontWeight: "500",
-    cursor: "pointer",
-    border: hoveredTab === tabName ? "1px solid rgba(155, 92, 255, 0.3)" : "1px solid transparent",
-    transition: "all 0.6s cubic-bezier(0.4, 0, 0.2, 1)"
-  });
+  const handleNotifClick = async () => {
+    setShowNotifDropdown(!showNotifDropdown);
+    setShowDropdown(false);
 
-  const getTextStyle = (tabName) => ({
-    maxWidth: hoveredTab === tabName ? "100px" : "0px",
-    opacity: hoveredTab === tabName ? 1 : 0,
-    whiteSpace: "nowrap",
-    overflow: "hidden",
-    transition: "all 0.6s cubic-bezier(0.4, 0, 0.2, 1)"
-  });
+    if (!showNotifDropdown && unreadCount > 0) {
+      setUnreadCount(0); 
+      try {
+        await fetch("http://127.0.0.1:5000/notifications/read", {
+          method: "PUT",
+          headers: { 
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${token}` 
+          }
+        });
+        setNotifications((prev) => prev.map(n => ({ ...n, is_read: 1 })));
+      } catch (e) {
+        console.error("Failed to mark notifications read:", e);
+      }
+    }
+  };
+
+  const handleDeleteNotif = async (e, notifId) => {
+    e.stopPropagation(); // 🌟 IMPORTANT: Isse delete dabane par dropdown band nahi hoga
+    
+    // UI se turant hata do (Optimistic Update)
+    setNotifications((prev) => prev.filter((n) => n.notification_id !== notifId));
+
+    try {
+      await fetch(`http://127.0.0.1:5000/notifications/${notifId}`, {
+        method: "DELETE",
+        headers: { "Authorization": `Bearer ${token}` }
+      });
+    } catch (error) {
+      console.error("Failed to delete notification:", error);
+    }
+  };
+
+  const handleLogout = () => {
+    localStorage.clear();
+    navigate("/login");
+  };
 
   return (
-    <nav className="navbar" style={{ 
-      display: "flex", justifyContent: "space-between", alignItems: "center", 
-      padding: "16px 50px", background: "#0a0a0f", borderBottom: "1px solid rgba(255,255,255,0.06)",
-      position: "sticky", top: 0, zIndex: 1000 
-    }}>
+    <nav className="navbar">
       {/* Logo */}
-      <Link to="/home" style={{ fontSize: "24px", fontWeight: "800", color: "#fff", textDecoration: "none", letterSpacing: "1px" }}>
-        MOVIE<span style={{ color: "#9b5cff" }}>VERSE</span>
+      <Link to="/home" className="logo">
+        MOVIE<span>VERSE</span>
       </Link>
 
       {/* Right Navigation Icons */}
-      <div style={{ display: "flex", alignItems: "center", gap: "18px" }}>
+      <div className="header-actions">
         
         {/* Explore */}
-        <Link 
-          to="/home" 
-          style={getNavItemStyle("explore")}
-          onMouseEnter={() => setHoveredTab("explore")}
-          onMouseLeave={() => setHoveredTab(null)}
-        >
+        <Link to="/explore" className="nav-item">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"></circle><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"></polygon></svg>
-          <span style={getTextStyle("explore")}>Explore</span>
+          <span className="nav-text">Explore</span>
         </Link>
 
         {/* Watchlist */}
-        <Link 
-          to="/watchlist" 
-          style={getNavItemStyle("watchlist")}
-          onMouseEnter={() => setHoveredTab("watchlist")}
-          onMouseLeave={() => setHoveredTab(null)}
-        >
+        <Link to="/watchlist" className="nav-item">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"></path></svg>
-          <span style={getTextStyle("watchlist")}>Watchlist</span>
+          <span className="nav-text">Watchlist</span>
         </Link>
 
         {/* Search */}
-        <button 
-          onClick={onOpenSearch} 
-          style={{ ...getNavItemStyle("search"), background: hoveredTab === "search" ? "rgba(155, 92, 255, 0.15)" : "transparent", border: hoveredTab === "search" ? "1px solid rgba(155, 92, 255, 0.3)" : "1px solid transparent" }}
-          onMouseEnter={() => setHoveredTab("search")}
-          onMouseLeave={() => setHoveredTab(null)}
-        >
+        <button onClick={onOpenSearch} className="nav-item">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
-          <span style={getTextStyle("search")}>Search</span>
+          <span className="nav-text">Search</span>
         </button>
 
-        {/* Notifications */}
-        <div 
-          style={{ ...getNavItemStyle("notifications"), position: "relative" }}
-          onMouseEnter={() => setHoveredTab("notifications")}
-          onMouseLeave={() => setHoveredTab(null)}
-        >
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path><path d="M13.73 21a2 2 0 0 1-3.46 0"></path></svg>
-          <span style={getTextStyle("notifications")}>Alerts</span>
-          <span style={{ position: "absolute", top: "6px", right: "6px", width: "7px", height: "7px", background: "#ff4757", borderRadius: "50%" }}></span>
+        {/* 🔔 NOTIFICATIONS */}
+        <div style={{ position: "relative" }} ref={notifDropdownRef}>
+          <div onClick={handleNotifClick} className="nav-item">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path><path d="M13.73 21a2 2 0 0 1-3.46 0"></path></svg>
+            <span className="nav-text">Alerts</span>
+            {unreadCount > 0 && <span className="notif-dot"></span>}
+          </div>
+
+          {/* 🔥 NOTIFICATIONS DROPDOWN (GLASSMORPHISM) */}
+          {showNotifDropdown && (
+            <div className="custom-dropdown" style={{ 
+              width: "360px", maxHeight: "480px", overflowY: "auto",
+              background: "rgba(18, 18, 22, 0.75)", // Transparent dark
+              backdropFilter: "blur(16px)", // Blur effect
+              WebkitBackdropFilter: "blur(16px)",
+              border: "1px solid rgba(255,255,255,0.08)",
+              boxShadow: "0 20px 40px rgba(0,0,0,0.6)"
+            }}>
+              
+              <div style={{ padding: "16px 20px", borderBottom: "1px solid rgba(255,255,255,0.08)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <strong style={{ color: "#fff", fontSize: "16px", letterSpacing: "0.5px" }}>Notifications</strong>
+              </div>
+
+              {notifications.length === 0 ? (
+                <div style={{ padding: "60px 20px", textAlign: "center", color: "#666", fontSize: "14px" }}>
+                  No new activity.
+                </div>
+              ) : (
+                notifications.map((notif) => (
+                  <div key={notif.notification_id} style={{
+                    padding: "16px 20px", 
+                    borderBottom: "1px solid rgba(255,255,255,0.04)",
+                    background: notif.is_read ? "transparent" : "rgba(255, 255, 255, 0.03)",
+                    display: "flex", gap: "14px", alignItems: "flex-start", transition: "0.2s",
+                    position: "relative"
+                  }}>
+                    
+                    {/* Placeholder Profile Pic with Icon */}
+                    <div style={{ position: "relative" }}>
+                      <div style={{
+                        width: "36px", height: "36px", borderRadius: "50%",
+                        background: "#2a2a35", display: "flex", alignItems: "center", justifyContent: "center",
+                        fontSize: "14px", color: "#fff", fontWeight: "bold"
+                      }}>
+                        {notif.message.startsWith('@') ? notif.message.charAt(1).toUpperCase() : 'M'}
+                      </div>
+                      
+                      {/* Chhota icon bottom right par */}
+                      <div style={{
+                        position: "absolute", bottom: "-2px", right: "-2px",
+                        background: notif.type === 'like' ? '#ff4757' : notif.type === 'comment' ? '#3742fa' : '#2ed573',
+                        width: "14px", height: "14px", borderRadius: "50%",
+                        display: "flex", alignItems: "center", justifyContent: "center", fontSize: "8px",
+                        border: "2px solid #14141a"
+                      }}>
+                        {notif.type === 'like' ? '❤' : notif.type === 'comment' ? '💬' : '👤'}
+                      </div>
+                    </div>
+                    
+                    <div style={{ flex: 1, paddingRight: "16px" }}>
+                      <p style={{ margin: "0 0 4px 0", fontSize: "14px", lineHeight: "1.4" }}>
+                        {formatMessage(notif.message)}
+                      </p>
+                      <span style={{ fontSize: "12px", color: "#666", fontWeight: "500" }}>
+                        {formatNotifDate(notif.created_at)}
+                      </span>
+                    </div>
+
+                    {/* 🗑️ DELETE BUTTON */}
+                    <button 
+                      onClick={(e) => handleDeleteNotif(e, notif.notification_id)}
+                      style={{
+                        position: "absolute", top: "16px", right: "16px",
+                        background: "transparent", border: "none", color: "#444",
+                        fontSize: "14px", cursor: "pointer", padding: "4px", transition: "0.2s"
+                      }}
+                      onMouseEnter={(e) => e.target.style.color = "#ff4757"}
+                      onMouseLeave={(e) => e.target.style.color = "#444"}
+                      title="Delete"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+          )}
         </div>
 
-        {/* Profile Dropdown Container */}
+        {/* 👤 PROFILE DROPDOWN */}
         {userId && (
           <div style={{ position: "relative" }} ref={dropdownRef}>
             <div 
-              onClick={() => setShowDropdown(!showDropdown)}
-              style={getNavItemStyle("profile")}
-              onMouseEnter={() => setHoveredTab("profile")}
-              onMouseLeave={() => setHoveredTab(null)}
+              onClick={() => {
+                setShowDropdown(!showDropdown);
+                setShowNotifDropdown(false);
+              }}
+              className="nav-item"
             >
-              <div style={{ 
-                width: "24px", height: "24px", borderRadius: "50%", background: "linear-gradient(135deg, #9b5cff, #47b8ff)",
-                display: "flex", alignItems: "center", justifyContent: "center", fontWeight: "bold", color: "#fff", fontSize: "12px", flexShrink: 0
-              }}>
+              <div className="profile-circle">
                 {username ? username.charAt(0).toUpperCase() : "U"}
               </div>
-              <span style={getTextStyle("profile")}>Profile</span>
+              <span className="nav-text">Profile</span>
             </div>
 
-            {/* 🌟 DROPDOWN MENU */}
             {showDropdown && (
-              <div style={{
-                position: "absolute",
-                right: 0,
-                top: "45px",
-                width: "200px",
-                background: "#14141a",
-                border: "1px solid rgba(255,255,255,0.1)",
-                borderRadius: "12px",
-                boxShadow: "0 10px 30px rgba(0,0,0,0.5)",
-                overflow: "hidden",
-                zIndex: 1100,
-                display: "flex",
-                flexDirection: "column"
-              }}>
+              <div className="custom-dropdown" style={{ width: "200px" }}>
                 <div style={{ padding: "12px 16px", borderBottom: "1px solid rgba(255,255,255,0.06)", fontSize: "13px", color: "#888" }}>
                   Signed in as <strong style={{ color: "#fff" }}>@{username || "user"}</strong>
                 </div>
@@ -149,34 +257,22 @@ export default function Navbar({ onOpenSearch }) {
                 <Link 
                   to={`/profile/${userId}`}
                   onClick={() => setShowDropdown(false)}
-                  style={{ padding: "12px 16px", color: "#ccc", textDecoration: "none", fontSize: "14px", transition: "0.2s", display: "flex", alignItems: "center", gap: "10px" }}
-                  onMouseEnter={(e) => { e.currentTarget.style.background = "rgba(155, 92, 255, 0.1)"; e.currentTarget.style.color = "#fff"; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "#ccc"; }}
+                  className="dropdown-item"
                 >
                   👤 My Profile
                 </Link>
 
                 <Link 
                   to={`/monthly-review`}
-                  onClick={() => {
-                    setShowDropdown(false);
-                    // Agar analytics tab par direct jaana ho toh state pass kar sakte ho ya profile khol ke analytics click karwa sakte ho
-                  }}
-                  style={{ padding: "12px 16px", color: "#ccc", textDecoration: "none", fontSize: "14px", transition: "0.2s", display: "flex", alignItems: "center", gap: "10px" }}
-                  onMouseEnter={(e) => { e.currentTarget.style.background = "rgba(155, 92, 255, 0.1)"; e.currentTarget.style.color = "#fff"; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "#ccc"; }}
+                  onClick={() => setShowDropdown(false)}
+                  className="dropdown-item"
                 >
                   📊 Monthly Analytics
                 </Link>
 
-                <div style={{ height: "1px", background: "rgba(255,255,255,0.06)" }}></div>
+                <div className="dropdown-divider"></div>
 
-                <button 
-                  onClick={handleLogout}
-                  style={{ padding: "12px 16px", background: "transparent", border: "none", color: "#ff4757", textAlign: "left", fontSize: "14px", cursor: "pointer", transition: "0.2s", display: "flex", alignItems: "center", gap: "10px", width: "100%" }}
-                  onMouseEnter={(e) => e.currentTarget.style.background = "rgba(255, 71, 87, 0.1)"}
-                  onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
-                >
+                <button onClick={handleLogout} className="dropdown-item logout-btn">
                   🚪 Log Out
                 </button>
               </div>

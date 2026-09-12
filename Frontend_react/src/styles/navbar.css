@@ -1,25 +1,24 @@
 /* =========================================
    GLOBAL NAVBAR & HEADER
 ========================================= */
-.home-header {
+.navbar {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 15px 50px;
-  background: #09090b;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-  position: fixed;
+  padding: 16px 50px;
+  background: #0a0a0f;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  position: sticky;
   top: 0;
-  left: 0;
   width: 100%;
-  z-index: 99999;
+  z-index: 2147483647 !important; /* Max possible z-index */
   pointer-events: auto !important;
 }
 
 .logo {
-  font-size: 26px;
+  font-size: 24px;
   font-weight: 800;
-  letter-spacing: 1.5px;
+  letter-spacing: 1px;
   color: #ffffff;
   text-decoration: none;
 }
@@ -28,124 +27,98 @@
   color: #9b5cff;
 }
 
-/* Right side actions wrapper */
+/* =========================================
+   🚀 BUTTERY SMOOTH HOVER ANIMATION (PURE CSS)
+========================================= */
 .header-actions {
   display: flex;
   align-items: center;
-  gap: 25px;
+  gap: 18px;
+  pointer-events: auto !important;
 }
 
-/* Explore Link */
-.nav-action-link {
+.nav-item {
   display: flex;
   align-items: center;
-  gap: 8px;
-  color: #fff;
-  text-decoration: none;
-  font-size: 15px;
-  font-weight: 500;
-  transition: opacity 0.2s;
-}
-
-.nav-action-link:hover {
-  opacity: 0.8;
-}
-
-/* Pure Icon Buttons */
-.icon-btn {
-  background: transparent;
-  border: none;
-  color: #8c8c8c;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: color 0.3s ease;
-  padding: 0;
-}
-
-.icon-btn:hover {
-  color: #ffffff;
-}
-
-/* Notification Badge */
-.notification {
-  position: relative;
-  text-decoration: none;
-}
-
-.badge {
-  position: absolute;
-  top: -6px;
-  right: -8px;
-  background: #e50914;
-  color: #fff;
-  font-size: 9px;
-  font-weight: bold;
-  padding: 2px 5px;
+  gap: 0px; /* Hidden gap */
+  padding: 8px 14px;
   border-radius: 10px;
-  border: 2px solid #09090b;
-}
-
-/* Profile Menu Wrapper */
-.profile-menu-container {
-  position: relative;
-  display: inline-block;
-}
-
-.profile-circle {
-  width: 35px;
-  height: 35px;
-  background: #2a2a2a;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: #a0a0a0;
+  color: #aaa;
+  text-decoration: none;
+  font-size: 14px;
+  font-weight: 500;
   cursor: pointer;
-  transition: all 0.2s ease;
+  background: transparent;
+  border: 1px solid transparent;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1); /* Smooth Easing */
 }
 
-.profile-circle:hover,
-.profile-circle.active {
-  background: #404040;
-  color: #ffffff;
+.nav-text {
+  max-width: 0px;
+  opacity: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  transition: all 0.7s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Jab mouse aayega, sab kuch instantly bada ho jayega */
+.nav-item:hover, .nav-item.active {
+  gap: 8px;
+  background: rgba(155, 92, 255, 0.15);
+  border-color: rgba(155, 92, 255, 0.3);
+  color: #fff;
+}
+
+.nav-item:hover .nav-text, .nav-item.active .nav-text {
+  max-width: 100px;
+  opacity: 1;
 }
 
 /* =========================================
-   DROPDOWN MENU
+   NOTIFICATIONS & DROPDOWNS
 ========================================= */
-.profile-dropdown-menu {
+.notif-dot {
   position: absolute;
-  top: calc(100% + 12px);
+  top: 6px;
+  right: 6px;
+  width: 8px;
+  height: 8px;
+  background: #ff4757;
+  border-radius: 50%;
+  border: 2px solid #0a0a0f;
+}
+
+.custom-dropdown {
+  position: absolute;
   right: 0;
-  width: 220px;
-  background: #121216;
+  top: 50px;
+  background: #14141a;
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 12px;
-  padding: 8px;
-  box-shadow: 0 15px 35px rgba(0, 0, 0, 0.8);
-  z-index: 100000;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+  z-index: 2147483648 !important;
+  display: flex;
+  flex-direction: column;
 }
 
-.dropdown-user-header {
-  padding: 8px 12px 6px 12px;
-}
-
-.user-greeting {
-  font-size: 11px;
-  color: #777;
-  margin: 0;
-  text-transform: uppercase;
-}
-
-.user-name {
-  font-size: 14px;
-  font-weight: 600;
+.profile-circle {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #9b5cff, #47b8ff);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: bold;
   color: #fff;
-  margin: 2px 0 0 0;
+  font-size: 12px;
+  flex-shrink: 0;
 }
 
+/* =========================================
+   👤 PROFILE DROPDOWN FIX
+========================================= */
 .dropdown-divider {
   height: 1px;
   background: rgba(255, 255, 255, 0.08);
@@ -157,56 +130,27 @@
   align-items: center;
   gap: 10px;
   width: 100%;
-  padding: 9px 12px;
-  font-size: 13.5px;
+  padding: 12px 16px;
+  font-size: 14px;
   color: #ccc;
   text-decoration: none;
   background: transparent;
   border: none;
-  border-radius: 6px;
   cursor: pointer;
   text-align: left;
-  transition: 0.15s ease;
+  transition: all 0.2s ease-out;
 }
 
 .dropdown-item:hover {
-  background: rgba(255, 255, 255, 0.08);
+  background: rgba(155, 92, 255, 0.1); /* Slight purple tint on hover */
   color: #fff;
 }
 
 .dropdown-item.logout-btn {
-  color: #ff5252;
+  color: #ff4757;
 }
 
 .dropdown-item.logout-btn:hover {
-  background: rgba(255, 82, 82, 0.15);
-  color: #ff5252;
-}
-
-/* Navbar ko absolute top layer par laane ke liye */
-.home-header {
-  z-index: 2147483647 !important; /* Max possible z-index in CSS */
-  pointer-events: auto !important;
-}
-
-.header-actions {
-  pointer-events: auto !important;
-  z-index: 2147483647 !important;
-}
-
-.profile-menu-container {
-  position: relative !important;
-  z-index: 2147483647 !important;
-  pointer-events: auto !important;
-}
-
-.profile-circle {
-  position: relative !important;
-  z-index: 2147483647 !important;
-  pointer-events: auto !important;
-}
-
-.profile-dropdown-menu {
-  z-index: 2147483648 !important; /* Button se bhi ek step upar */
-  pointer-events: auto !important;
+  background: rgba(255, 71, 87, 0.1); /* Slight red tint on logout hover */
+  color: #ff4757;
 }
