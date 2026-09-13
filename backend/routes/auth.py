@@ -380,8 +380,57 @@ def delete_notification(notif_id):
         print("Delete Notif Error:", e)
         return jsonify({"error": "Failed to delete notification"}), 500
 
-    
 
-# Note: Puraana "/reset-password" (with @token_required) nikal diya hai kyunki 
-# bina login kiye reset karne ke liye ab "/reset-password-otp" ban gaya hai. 
-# Aur login hone ke baad password change karne ke liye "/change-password" already hai.
+
+# =====================================================================
+# 👤 TOGGLE FOLLOW USER
+# =====================================================================
+@auth_bp.route("/users/<int:target_user_id>/follow", methods=["POST"])
+@token_required
+def toggle_follow(target_user_id):
+    user_id = g.user_id 
+
+    if user_id == target_user_id:
+        return jsonify({"error": "You cannot follow yourself"}), 400
+
+    try:
+        with engine.begin() as conn:
+            # 🔥 FIX: 'following_id' use kiya hai ab teri table ke hisaab se
+            existing_follow = conn.execute(
+                text("SELECT * FROM followers WHERE follower_id = :f1 AND following_id = :f2"),
+                {"f1": user_id, "f2": target_user_id}
+            ).first()
+
+            if existing_follow:
+                conn.execute(
+                    text("DELETE FROM followers WHERE follower_id = :f1 AND following_id = :f2"),
+                    {"f1": user_id, "f2": target_user_id}
+                )
+                return jsonify({"message": "Unfollowed successfully", "is_following": False}), 200
+            else:
+                conn.execute(
+                    text("INSERT INTO followers (follower_id, following_id) VALUES (:f1, :f2)"),
+                    {"f1": user_id, "f2": target_user_id}
+                )
+
+                # 🔥 NOTIFICATION TRIGGER
+                sender = conn.execute(
+                    text("SELECT username FROM users WHERE user_id = :u"), {"u": user_id}
+                ).mappings().first()
+                
+                sender_name = sender["username"] if sender else "Someone"
+                
+                conn.execute(text("""
+                    INSERT INTO notifications (user_id, sender_id, message, type) 
+                    VALUES (:target, :sender, :msg, 'follow')
+                """), {
+                    "target": target_user_id, 
+                    "sender": user_id, 
+                    "msg": f"@{sender_name} started following you."
+                })
+
+                return jsonify({"message": "Followed successfully", "is_following": True}), 200
+
+    except Exception as e:
+        print(f"FOLLOW ERROR: {e}")
+        return jsonify({"error": "Failed to follow user"}), 500

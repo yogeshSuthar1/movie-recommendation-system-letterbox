@@ -271,6 +271,7 @@ def delete_review(review_id):
 
 
 # Toggle Like
+# Toggle Like
 @review_bp.route("/reviews/<int:review_id>/like", methods=["POST"])
 @token_required
 def toggle_like_review(review_id):
@@ -278,7 +279,6 @@ def toggle_like_review(review_id):
 
     try:
         with engine.begin() as conn:
-            # 🌟 UPDATE: Review ke sath owner_id aur movie title bhi nikal rahe hain taaki message mein daal sakein
             review = conn.execute(
                 text("""
                     SELECT r.review_id, r.user_id as owner_id, r.likes, m.title 
@@ -302,8 +302,9 @@ def toggle_like_review(review_id):
                     text("DELETE FROM review_likes WHERE review_id = :r AND user_id = :u"),
                     {"r": review_id, "u": user_id}
                 )
+                # 🔥 FIX: GREATEST wapas laga diya!
                 conn.execute(
-                    text("UPDATE reviews SET likes = MAX(likes - 1, 0) WHERE review_id = :r"),
+                    text("UPDATE reviews SET likes = GREATEST(likes - 1, 0) WHERE review_id = :r"),
                     {"r": review_id}
                 )
                 action = "unliked"
@@ -318,10 +319,8 @@ def toggle_like_review(review_id):
                     {"r": review_id}
                 )
                 
-                # 🔥 NOTIFICATION ENGINE TRIGGER 🔥
-                # 1. Khud ke review par like karne par notification nahi jayega
+                # 🔥 NOTIFICATION TRIGGER
                 if review["owner_id"] != user_id:
-                    # 2. Like karne wale ka username nikalo
                     sender = conn.execute(
                         text("SELECT username FROM users WHERE user_id = :u"), 
                         {"u": user_id}
@@ -329,7 +328,6 @@ def toggle_like_review(review_id):
                     
                     sender_name = sender["username"] if sender else "Someone"
                     
-                    # 3. Notification Table mein entry daalo
                     conn.execute(text("""
                         INSERT INTO notifications (user_id, sender_id, message, type) 
                         VALUES (:owner, :sender, :msg, 'like')
@@ -351,7 +349,8 @@ def toggle_like_review(review_id):
     except Exception as e:
         print(f"LIKE TOGGLE ERROR: {e}")
         return jsonify({"error": "Failed to toggle like"}), 500
-    
+
+
 # Get Single Review
 @review_bp.route("/review/<int:review_id>", methods=["GET"])
 @token_required
@@ -425,5 +424,8 @@ def get_user_profile(target_user_id):
         "total_reviews": len(user_reviews),
         "reviews": [dict(row) for row in user_reviews]
     }), 200
+
+
+
 
 

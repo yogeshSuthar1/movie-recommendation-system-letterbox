@@ -48,6 +48,7 @@ export default function Profile() {
 
   // Follow & Stats States
   const loggedInUserId = parseInt(localStorage.getItem("user_id"));
+  const token = localStorage.getItem("token");
   const isMyProfile = loggedInUserId === parseInt(id);  
   const [isFollowing, setIsFollowing] = useState(false);
   const [followStats, setFollowStats] = useState({ followers_count: 0, following_count: 0 });
@@ -189,11 +190,27 @@ export default function Profile() {
   };
 
   const handleFollowToggle = async () => {
-    const res = await toggleFollowUser(id);
-    if (res && res.status) {
-      setIsFollowing(res.status === "followed");
-      const sData = await getUserFollowStats(id);
-      setFollowStats(sData);
+    try {
+      const res = await fetch(`http://127.0.0.1:5000/users/${id}/follow`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}` // 🔥 Token bhej rahe hain
+        }
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        setIsFollowing(data.is_following);
+        
+        // Follow dabane ke baad stats refresh karne ke liye
+        const sData = await getUserFollowStats(id);
+        setFollowStats(sData);
+      } else {
+        console.error("Failed to follow user");
+      }
+    } catch (err) {
+      console.error("Follow trigger error:", err);
     }
   };
 

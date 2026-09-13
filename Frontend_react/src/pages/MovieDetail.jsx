@@ -59,6 +59,7 @@ export default function MovieDetail() {
 
   const reviewSectionRef = useRef(null);
   const currentUsername = localStorage.getItem("username");
+  const token = localStorage.getItem("token");
 
   const getInitials = (name) => {
     if (!name) return "";
@@ -494,8 +495,11 @@ export default function MovieDetail() {
                                   onClick={async () => {
                                     const res = await fetch(`http://127.0.0.1:5000/comments/${cmt.comment_id}`, {
                                       method: 'DELETE',
-                                      headers: { 'Content-Type': 'application/json' },
-                                      body: JSON.stringify({ user_id: localStorage.getItem("user_id") })
+                                      headers: { 
+                                        'Content-Type': 'application/json',
+                                        'Authorization': `Bearer ${token}`
+                                       },
+                                      body: JSON.stringify({ user_id: localStorage.getItem("user_id") ,comment_text: commentInput})
                                     });
                                     if (res.ok) {
                                       const freshReviews = await getMovieReviews(id);
