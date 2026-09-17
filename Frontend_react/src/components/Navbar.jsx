@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import "../styles/navbar.css"; // 🔥 Apni CSS file ka path theek kar lena
+import "../styles/navbar.css"; 
 
 export default function Navbar({ onOpenSearch }) {
   const navigate = useNavigate();
@@ -8,8 +8,6 @@ export default function Navbar({ onOpenSearch }) {
   const username = localStorage.getItem("username");
   const token = localStorage.getItem("token"); 
   
-  // 🧹 Yahan se humne Hover wala state hata diya hai!
-
   const [showDropdown, setShowDropdown] = useState(false);
   const dropdownRef = useRef(null);
 
@@ -17,6 +15,11 @@ export default function Navbar({ onOpenSearch }) {
   const [unreadCount, setUnreadCount] = useState(0);
   const [showNotifDropdown, setShowNotifDropdown] = useState(false);
   const notifDropdownRef = useRef(null);
+
+  // 🚀 INBOX STATES (NEW)
+  const [inbox, setInbox] = useState([]);
+  const [showInbox, setShowInbox] = useState(false);
+  const inboxDropdownRef = useRef(null);
 
   const formatNotifDate = (dateString) => {
     const date = new Date(dateString);
@@ -31,7 +34,7 @@ export default function Navbar({ onOpenSearch }) {
   const formatMessage = (msg) => {
     if (msg.startsWith('@')) {
       const firstSpace = msg.indexOf(' ');
-      const username = msg.substring(1, firstSpace); // without @
+      const username = msg.substring(1, firstSpace);
       const restOfMsg = msg.substring(firstSpace);
       return <span style={{ color: "#aaa" }}><strong style={{ color: "#fff" }}>{username}</strong>{restOfMsg}</span>;
     }
@@ -46,13 +49,20 @@ export default function Navbar({ onOpenSearch }) {
       if (notifDropdownRef.current && !notifDropdownRef.current.contains(event.target)) {
         setShowNotifDropdown(false);
       }
+      // 🚀 INBOX CLICK OUTSIDE LOGIC
+      if (inboxDropdownRef.current && !inboxDropdownRef.current.contains(event.target)) {
+        setShowInbox(false);
+      }
     };
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
   useEffect(() => {
-    if (userId && token) fetchNotifications();
+    if (userId && token) {
+      fetchNotifications();
+      fetchInbox(); // 🚀 FETCH INBOX ON LOAD
+    }
   }, [userId, token]);
 
   const fetchNotifications = async () => {
@@ -73,9 +83,25 @@ export default function Navbar({ onOpenSearch }) {
     }
   };
 
+  // 🚀 FETCH INBOX API FUNCTION
+  const fetchInbox = async () => {
+    try {
+      const res = await fetch("http://127.0.0.1:5000/inbox", {
+        headers: { "Authorization": `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setInbox(data.inbox || []);
+      }
+    } catch (e) {
+      console.error("Failed to fetch inbox:", e);
+    }
+  };
+
   const handleNotifClick = async () => {
     setShowNotifDropdown(!showNotifDropdown);
     setShowDropdown(false);
+    setShowInbox(false); // Close other dropdowns
 
     if (!showNotifDropdown && unreadCount > 0) {
       setUnreadCount(0); 
@@ -95,11 +121,8 @@ export default function Navbar({ onOpenSearch }) {
   };
 
   const handleDeleteNotif = async (e, notifId) => {
-    e.stopPropagation(); // 🌟 IMPORTANT: Isse delete dabane par dropdown band nahi hoga
-    
-    // UI se turant hata do (Optimistic Update)
+    e.stopPropagation(); 
     setNotifications((prev) => prev.filter((n) => n.notification_id !== notifId));
-
     try {
       await fetch(`http://127.0.0.1:5000/notifications/${notifId}`, {
         method: "DELETE",
@@ -117,10 +140,11 @@ export default function Navbar({ onOpenSearch }) {
 
   return (
     <nav className="navbar">
-      {/* Logo */}
-      <Link to="/home" className="logo">
-        MOVIE<span>VERSE</span>
-      </Link>
+      {/* 🚀 PREMIUM NEXUS LOGO */}
+      <div className="navbar-logo-container">
+        <Link to="/home" className="nexus-logo">NEXUS</Link>
+        <span className="nexus-tagline">| The Cinematic Connection</span>
+      </div>
 
       {/* Right Navigation Icons */}
       <div className="header-actions">
@@ -143,6 +167,69 @@ export default function Navbar({ onOpenSearch }) {
           <span className="nav-text">Search</span>
         </button>
 
+        {/* 📩 INBOX / MESSAGES (NEW) */}
+        <div style={{ position: "relative" }} ref={inboxDropdownRef}>
+          <div onClick={() => {
+            setShowInbox(!showInbox);
+            setShowNotifDropdown(false);
+            setShowDropdown(false);
+          }} className="nav-item">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path><polyline points="22,6 12,13 2,6"></polyline></svg>
+            <span className="nav-text">Inbox</span>
+            {inbox.length > 0 && <span className="notif-dot" style={{ background: "#47b8ff" }}></span>}
+          </div>
+
+          {showInbox && (
+            <div className="custom-dropdown" style={{ 
+              width: "380px", maxHeight: "480px", overflowY: "auto",
+              background: "rgba(18, 18, 22, 0.75)",
+              backdropFilter: "blur(16px)",
+              WebkitBackdropFilter: "blur(16px)",
+              border: "1px solid rgba(255,255,255,0.08)",
+              boxShadow: "0 20px 40px rgba(0,0,0,0.6)"
+            }}>
+              
+              <div style={{ padding: "16px 20px", borderBottom: "1px solid rgba(255,255,255,0.08)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <strong style={{ color: "#fff", fontSize: "16px", letterSpacing: "0.5px" }}>Shared With You</strong>
+              </div>
+
+              {inbox.length === 0 ? (
+                <div style={{ padding: "60px 20px", textAlign: "center", color: "#666", fontSize: "14px" }}>
+                  Your inbox is empty. No movies shared yet.
+                </div>
+              ) : (
+                inbox.map((msg) => (
+                  <Link 
+                    to={`/movie/${msg.movie_id}`} 
+                    key={msg.share_id} 
+                    onClick={() => setShowInbox(false)}
+                    style={{
+                      padding: "16px 20px", 
+                      borderBottom: "1px solid rgba(255,255,255,0.04)",
+                      background: msg.is_read ? "transparent" : "rgba(71, 184, 255, 0.05)",
+                      display: "flex", gap: "14px", alignItems: "center", transition: "0.2s",
+                      textDecoration: "none"
+                    }}
+                    onMouseEnter={(e) => e.currentTarget.style.background = "rgba(255, 255, 255, 0.03)"}
+                    onMouseLeave={(e) => e.currentTarget.style.background = msg.is_read ? "transparent" : "rgba(71, 184, 255, 0.05)"}
+                  >
+                    <img src={msg.poster_url} alt={msg.title} style={{ width: "45px", height: "68px", borderRadius: "6px", objectFit: "cover", boxShadow: "0 4px 10px rgba(0,0,0,0.3)" }} />
+                    <div style={{ flex: 1, paddingRight: "10px" }}>
+                      <p style={{ margin: "0 0 4px 0", fontSize: "12.5px", color: "#47b8ff", fontWeight: "600" }}>
+                        @{msg.sender_name} shared a movie
+                      </p>
+                      <h4 style={{ margin: "0 0 6px 0", fontSize: "15px", color: "#fff" }}>{msg.title}</h4>
+                      <p style={{ margin: 0, fontSize: "13px", color: "#aaa", fontStyle: "italic", lineHeight: "1.4" }}>
+                        "{msg.message}"
+                      </p>
+                    </div>
+                  </Link>
+                ))
+              )}
+            </div>
+          )}
+        </div>
+
         {/* 🔔 NOTIFICATIONS */}
         <div style={{ position: "relative" }} ref={notifDropdownRef}>
           <div onClick={handleNotifClick} className="nav-item">
@@ -151,12 +238,12 @@ export default function Navbar({ onOpenSearch }) {
             {unreadCount > 0 && <span className="notif-dot"></span>}
           </div>
 
-          {/* 🔥 NOTIFICATIONS DROPDOWN (GLASSMORPHISM) */}
+          {/* 🔥 NOTIFICATIONS DROPDOWN */}
           {showNotifDropdown && (
             <div className="custom-dropdown" style={{ 
               width: "360px", maxHeight: "480px", overflowY: "auto",
-              background: "rgba(18, 18, 22, 0.75)", // Transparent dark
-              backdropFilter: "blur(16px)", // Blur effect
+              background: "rgba(18, 18, 22, 0.75)",
+              backdropFilter: "blur(16px)",
               WebkitBackdropFilter: "blur(16px)",
               border: "1px solid rgba(255,255,255,0.08)",
               boxShadow: "0 20px 40px rgba(0,0,0,0.6)"
@@ -180,7 +267,6 @@ export default function Navbar({ onOpenSearch }) {
                     position: "relative"
                   }}>
                     
-                    {/* Placeholder Profile Pic with Icon */}
                     <div style={{ position: "relative" }}>
                       <div style={{
                         width: "36px", height: "36px", borderRadius: "50%",
@@ -190,7 +276,6 @@ export default function Navbar({ onOpenSearch }) {
                         {notif.message.startsWith('@') ? notif.message.charAt(1).toUpperCase() : 'M'}
                       </div>
                       
-                      {/* Chhota icon bottom right par */}
                       <div style={{
                         position: "absolute", bottom: "-2px", right: "-2px",
                         background: notif.type === 'like' ? '#ff4757' : notif.type === 'comment' ? '#3742fa' : '#2ed573',
@@ -211,7 +296,6 @@ export default function Navbar({ onOpenSearch }) {
                       </span>
                     </div>
 
-                    {/* 🗑️ DELETE BUTTON */}
                     <button 
                       onClick={(e) => handleDeleteNotif(e, notif.notification_id)}
                       style={{
@@ -239,6 +323,7 @@ export default function Navbar({ onOpenSearch }) {
               onClick={() => {
                 setShowDropdown(!showDropdown);
                 setShowNotifDropdown(false);
+                setShowInbox(false); // Close Inbox 
               }}
               className="nav-item"
             >

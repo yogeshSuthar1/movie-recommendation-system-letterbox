@@ -13,6 +13,7 @@ from backend.routes.preferences import preferences_bp
 from backend.routes.home import home_bp
 from backend.routes.collections import collections_bp
 from backend.extensions import mail
+
 import os
 import random
 
@@ -36,7 +37,7 @@ def send_otp_email(user_email, otp):
         msg = Message('Your MovieVerse Verification Code', 
                       sender=app.config['MAIL_USERNAME'], 
                       recipients=[user_email])
-        msg.body = f"Welcome to MovieVerse! 🎬\n\nYour 6-digit verification code is: {otp}\n\nPlease don't share this code with anyone."
+        msg.body = f"Welcome to NEXUS! 🎬\n\nYour 6-digit verification code is: {otp}\n\nPlease don't share this code with anyone."
         mail.send(msg)
         return True
     except Exception as e:
@@ -60,7 +61,7 @@ app.register_blueprint(social_bp)
 @app.route("/")
 def home():
     return {
-        "message": "MovieVerse API is Running "
+        "message": "NEXUS API is Running "
     }
 
 if __name__ == "__main__":

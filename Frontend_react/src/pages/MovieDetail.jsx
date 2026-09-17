@@ -46,6 +46,13 @@ export default function MovieDetail() {
   const [trailerKey, setTrailerKey] = useState(null);
   const [isTrailerOpen, setIsTrailerOpen] = useState(false);
 
+  // ✈️ SHARE MOVIE STATES
+  const [showShareModal, setShowShareModal] = useState(false);
+  const [shareUsername, setShareUsername] = useState("");
+  const [shareMessage, setShareMessage] = useState("Hey, check out this movie! I think you'll love it.");
+  const [shareStatus, setShareStatus] = useState(null);
+  const [allUsers, setAllUsers] = useState([]); // All users state
+
   const handleOpenCollectionModal = async () => {
     const userId = localStorage.getItem("user_id");
     if (!userId) {
@@ -62,11 +69,12 @@ export default function MovieDetail() {
   const token = localStorage.getItem("token");
 
   const getInitials = (name) => {
-    if (!name) return "";
-    const nameParts = name.split(" ");
-    return nameParts.length >= 2
-      ? (nameParts[0][0] + nameParts[1][0]).toUpperCase()
-      : nameParts[0][0].toUpperCase();
+    if (!name || typeof name !== "string") return "U";
+    const nameParts = name.trim().split(" ");
+    if (nameParts.length >= 2 && nameParts[0] && nameParts[1]) {
+      return (nameParts[0][0] + nameParts[1][0]).toUpperCase();
+    }
+    return nameParts[0] ? nameParts[0][0].toUpperCase() : "U";
   };
 
   const handleAddToExisting = async (collectionId) => {
@@ -88,11 +96,21 @@ export default function MovieDetail() {
     }
   };
 
-  // 🌟 FETCH TRAILER FROM YOUTUBE API (Optional fallback to dummy/search if needed)
+  // 🚀 Fetch Users for Suggestions
+  useEffect(() => {
+    if (showShareModal && token) {
+      fetch("http://127.0.0.1:5000/users", {
+        headers: { "Authorization": `Bearer ${token}` }
+      })
+      .then(res => res.json())
+      .then(data => setAllUsers(data.users || []))
+      .catch(err => console.log("Failed to load users", err));
+    }
+  }, [showShareModal, token]);
+
   const fetchTrailer = async (movieTitle, releaseYear) => {
     try {
       const videoId = await getMovieTrailerKey(movieTitle, releaseYear);
-      
       if (videoId) {
         setTrailerKey(videoId);
         setIsTrailerOpen(true);
@@ -102,6 +120,44 @@ export default function MovieDetail() {
     } catch (err) {
       console.error("Trailer fetch error:", err);
       alert("Unable to fetch trailer at the moment.");
+    }
+  };
+
+  const handleShareMovie = async () => {
+    if (!shareUsername.trim()) {
+      setShareStatus({ type: "error", msg: "Please enter a username!" });
+      return;
+    }
+    
+    setShareStatus({ type: "loading", msg: "Sending..." });
+    try {
+      const res = await fetch("http://127.0.0.1:5000/share/movie", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          username: shareUsername,
+          movie_id: id,
+          message: shareMessage
+        })
+      });
+      
+      const data = await res.json();
+      if (res.ok) {
+        setShareStatus({ type: "success", msg: data.message });
+        setTimeout(() => {
+          setShowShareModal(false);
+          setShareStatus(null);
+          setShareUsername("");
+          setShareMessage("Hey, check out this movie! I think you'll love it.");
+        }, 2000);
+      } else {
+        setShareStatus({ type: "error", msg: data.error });
+      }
+    } catch (err) {
+      setShareStatus({ type: "error", msg: "Network Error! Is Flask running?" });
     }
   };
 
@@ -207,13 +263,14 @@ export default function MovieDetail() {
     <div className="movie-detail-page">
       <Navbar onOpenSearch={() => setIsSearchOpen(true)} />
 
-      {/* 🌟 WIDE CINEMATIC BACKDROP HERO (Plex / Modern OTT Style) */}
+      {/* 🌟 WIDE CINEMATIC BACKDROP HERO */}
       <div className="md-backdrop-hero" style={{ backgroundImage: `url(${movie.backdrop_url || movie.poster_url})` }}>
         <div className="md-backdrop-overlay"></div>
 
-        {/* Play Icon in the Center of Backdrop */}
         <div className="md-center-play-btn" onClick={() => fetchTrailer(movie.title, movie.release_year)}>
-          <div className="play-icon-circle">▶</div>
+          <div className="play-icon-circle">
+            <svg viewBox="0 0 24 24" width="28" height="28" stroke="currentColor" strokeWidth="2" fill="currentColor" strokeLinecap="round" strokeLinejoin="round" style={{ marginLeft: "4px" }}><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+          </div>
         </div>
 
         <div className="md-backdrop-content">
@@ -221,46 +278,85 @@ export default function MovieDetail() {
             <img src={movie.poster_url} alt={movie.title} />
           </div>
 
-          <div className="md-backdrop-info">
-            <div className="md-meta-top">
-              <span>Movie</span> • <span>{movie.release_year}</span> • <span>{movie.runtime_minutes || "120"} mins</span> • <span>Directed by {movie.director || "Unknown"}</span>
-            </div>
-            <h1 className="md-backdrop-title">{movie.title}</h1>
+          <div className="md-backdrop-info" style={{ width: '100%' }}>
             
-            <div className="md-genres-hero">
+            {/* 🚀 Sleek Top Row: Title + Meta on Left, Share on Right */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '15px' }}>
+              <div>
+                <div className="md-meta-top">
+                  <span>Movie</span> • <span>{movie.release_year}</span> • <span>{movie.runtime_minutes || "120"} mins</span> • <span>Directed by {movie.director || "Unknown"}</span>
+                </div>
+                <h1 className="md-backdrop-title" style={{ marginTop: '5px' }}>{movie.title}</h1>
+              </div>
+
+              {/* 🚀 PREMIUM SHARE BUTTON (Top Right) */}
+              <button 
+                onClick={() => setShowShareModal(true)}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: '8px',
+                  background: 'rgba(255, 255, 255, 0.08)', border: '1px solid rgba(255, 255, 255, 0.15)',
+                  padding: '8px 16px', borderRadius: '30px', color: '#fff',
+                  cursor: 'pointer', transition: 'all 0.3s ease',
+                  backdropFilter: 'blur(10px)', marginTop: '5px'
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.background='rgba(155, 92, 255, 0.2)'; e.currentTarget.style.borderColor='rgba(155, 92, 255, 0.5)'; e.currentTarget.style.color='#fff'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background='rgba(255, 255, 255, 0.08)'; e.currentTarget.style.borderColor='rgba(255, 255, 255, 0.15)'; }}
+              >
+                <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" strokeWidth="2.5" fill="none" strokeLinecap="round" strokeLinejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
+                <span style={{ fontSize: "13px", fontWeight: "600", letterSpacing: "0.5px" }}>Share</span>
+              </button>
+            </div>
+            
+            <div className="md-genres-hero" style={{ marginTop: '10px' }}>
               {movie.genres?.map(g => <span key={g} className="genre-pill">{g}</span>)}
             </div>
-          </div>
 
-          <div className="md-backdrop-actions">
-            <button 
-              className={hasReviewed ? "btn-watched" : "btn-watchlist"}
-              onClick={handleWatchedClick}
-              style={{
-                background: hasReviewed ? "#1db954" : "rgba(255, 255, 255, 0.12)",
-                color: hasReviewed ? "#000" : "#fff",
-                borderColor: hasReviewed ? "transparent" : "rgba(255, 255, 255, 0.25)",
-                cursor: hasReviewed ? "default" : "pointer"
-              }}
-            >
-              {hasReviewed ? "✔ Watched" : "Mark as Watched"}
-            </button>
+            {/* 🚀 LIBRARY ACTION BUTTONS (SVGs Only) */}
+            <div className="md-backdrop-actions" style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', marginTop: '20px' }}>
+              
+              <button 
+                className={hasReviewed ? "btn-watched" : "btn-watchlist"}
+                onClick={handleWatchedClick}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: '8px',
+                  background: hasReviewed ? "#1db954" : "rgba(255, 255, 255, 0.12)",
+                  color: hasReviewed ? "#000" : "#fff",
+                  borderColor: hasReviewed ? "transparent" : "rgba(255, 255, 255, 0.25)",
+                  cursor: hasReviewed ? "default" : "pointer",
+                  padding: '10px 20px', borderRadius: '8px', fontWeight: '600'
+                }}
+              >
+                {hasReviewed ? 
+                  <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" strokeWidth="3" fill="none" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg> : 
+                  <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+                }
+                {hasReviewed ? "Watched" : "Mark as Watched"}
+              </button>
 
-            <button className="btn-secondary-action" onClick={handleOpenCollectionModal}>
-              📁 Collections
-            </button>
-            
-            <button 
-              className="btn-secondary-action" 
-              onClick={handleAddToWatchlist}
-              style={{ 
-                background: isWatchlistAdded ? 'rgba(29, 185, 84, 0.2)' : '', 
-                borderColor: isWatchlistAdded ? '#1db954' : '',
-                color: isWatchlistAdded ? '#1db954' : ''
-              }}
-            >
-              {isWatchlistAdded ? "✔ Added" : "🔖 Watch Later"}
-            </button>
+              <button 
+                className="btn-secondary-action" 
+                onClick={handleOpenCollectionModal}
+                style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 20px' }}
+              >
+                <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
+                Collections
+              </button>
+              
+              <button 
+                className="btn-secondary-action" 
+                onClick={handleAddToWatchlist}
+                style={{ 
+                  display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 20px',
+                  background: isWatchlistAdded ? 'rgba(29, 185, 84, 0.15)' : '', 
+                  borderColor: isWatchlistAdded ? '#1db954' : '',
+                  color: isWatchlistAdded ? '#1db954' : ''
+                }}
+              >
+                <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" strokeWidth="2" fill={isWatchlistAdded ? "currentColor" : "none"} strokeLinecap="round" strokeLinejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"></path></svg>
+                {isWatchlistAdded ? "Added" : "Watch Later"}
+              </button>
+
+            </div>
           </div>
         </div>
       </div>
@@ -284,7 +380,6 @@ export default function MovieDetail() {
           </div>
         </div>
       )}
-
 
       <div className="md-main-split">
         <div className="md-left-col">
@@ -354,7 +449,8 @@ export default function MovieDetail() {
                   onChange={(e) => setIsSpoiler(e.target.checked)} 
                   style={{ cursor: 'pointer' }}
                 />
-                ⚠️ This review contains spoilers
+                <svg viewBox="0 0 24 24" width="16" height="16" stroke="#ffcc00" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
+                This review contains spoilers
               </label>
 
               <div className="review-btn-row">
@@ -385,7 +481,7 @@ export default function MovieDetail() {
 
             <div className="reviews-list">
               {sortedReviews.slice(0, visibleReviews).map((review, index) => {
-                const isHiddenSpoiler = review.is_spoiler && !revealedSpoilers[review.review_id];
+                const isHiddenSpoiler = Boolean(review.is_spoiler) && !revealedSpoilers[review.review_id];
                 
                 return (
                   <div key={review.review_id} className="user-review-card">
@@ -434,30 +530,32 @@ export default function MovieDetail() {
                             background: 'rgba(255, 77, 77, 0.15)', color: '#ff4d4d',
                             padding: '8px 18px', borderRadius: '24px', fontSize: '13px',
                             fontWeight: '600', border: '1px solid rgba(255, 77, 77, 0.3)',
-                            backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', gap: '6px'
+                            backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', gap: '8px'
                           }}>
-                            👁️ Reveal Spoilers
+                            <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+                            Reveal Spoilers
                           </span>
                         </div>
                       )}
                     </div>
                     
-                    <div className="review-actions" style={{ display: "flex", gap: "15px", marginTop: "10px" }}>
+                    <div className="review-actions" style={{ display: "flex", gap: "20px", marginTop: "10px" }}>
                       <button 
                         className={`like-btn ${review.is_liked ? 'liked' : ''}`}
                         onClick={() => handleLikeClick(review.review_id, index)}
-                        style={{ background: 'transparent', border: 'none', color: '#aaa', cursor: 'pointer', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '5px' }}
+                        style={{ background: 'transparent', border: 'none', color: review.is_liked ? '#ff4757' : '#aaa', cursor: 'pointer', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '6px' }}
                       >
-                        {review.is_liked ? '❤️' : '🤍'} 
-                        <span className="like-count">{review.likes || 0}</span>
+                        <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" strokeWidth="2" fill={review.is_liked ? "currentColor" : "none"} strokeLinecap="round" strokeLinejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"></path></svg>
+                        <span className="like-count" style={{ color: '#aaa' }}>{review.likes || 0}</span>
                       </button>
 
                       <button 
                         className="comment-toggle-btn"
                         onClick={() => setActiveCommentReviewId(activeCommentReviewId === review.review_id ? null : review.review_id)}
-                        style={{ background: 'transparent', border: 'none', color: '#aaa', cursor: 'pointer', fontSize: '13px' }}
+                        style={{ background: 'transparent', border: 'none', color: '#aaa', cursor: 'pointer', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '6px' }}
                       >
-                        💬 {review.comments?.length || 0} Comments
+                        <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"></path></svg>
+                        {review.comments?.length || 0} Comments
                       </button>
                     </div>
 
@@ -649,7 +747,10 @@ export default function MovieDetail() {
               ) : (
                 userCollections.map(col => (
                   <div key={col.collection_id} className="col-select-item" onClick={() => handleAddToExisting(col.collection_id)}>
-                    <span>📂 {col.title}</span>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
+                      {col.title}
+                    </span>
                     <button className="add-plus-btn">+</button>
                   </div>
                 ))
@@ -675,6 +776,105 @@ export default function MovieDetail() {
             )}
 
             <button className="close-modal-x" onClick={() => setShowColModal(false)}>✕</button>
+          </div>
+        </div>
+      )}
+
+      {/* 🚀 JADU WALA MODAL: SHARE MOVIE POPUP */}
+      {showShareModal && (
+        <div className="modal-overlay" style={{ zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => setShowShareModal(false)}>
+          <div className="col-modal-content" onClick={(e) => e.stopPropagation()} style={{ width: "420px", background: "#111116", border: "1px solid rgba(155, 92, 255, 0.2)", borderRadius: "16px" }}>
+            <h3 style={{ marginTop: 0, borderBottom: "1px solid rgba(255,255,255,0.1)", paddingBottom: "15px", display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <svg viewBox="0 0 24 24" width="20" height="20" stroke="#9b5cff" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
+              Share "{movie.title}"
+            </h3>
+
+            <div style={{ padding: "10px 0" }}>
+              <label style={{ fontSize: "12px", color: "#888", display: "block", marginBottom: "8px", fontWeight: "700", letterSpacing: "0.5px" }}>FRIEND'S EXACT USERNAME</label>
+              <input 
+                type="text" 
+                value={shareUsername}
+                onChange={(e) => setShareUsername(e.target.value)}
+                style={{ width: "93%", padding: "14px", borderRadius: "8px", background: "#1a1a24", border: "1px solid #333", color: "#fff", outline: "none", fontSize: "14px" }}
+                placeholder="e.g. op_yogi"
+                autoFocus
+              />
+
+              {/* 🚀 SUGGESTED FRIENDS CHIPS (INSTA STYLE) */}
+              {allUsers.length > 0 && (
+                <div style={{ marginTop: "12px", marginBottom: "20px" }}>
+                  <span style={{ fontSize: "11px", color: "#888", fontWeight: "600", textTransform: "uppercase", letterSpacing: "0.5px" }}>Suggested Friends</span>
+                  
+                  <div style={{ display: 'flex', gap: '8px', overflowX: 'auto', padding: '10px 0', scrollbarWidth: 'none', WebkitOverflowScrolling: 'touch' }}>
+                    {allUsers
+                      .filter(u => u.username.toLowerCase().includes(shareUsername.toLowerCase()))
+                      .map(u => (
+                      <div 
+                        key={u.username}
+                        onClick={() => setShareUsername(u.username)}
+                        style={{
+                          display: 'flex', alignItems: 'center', gap: '6px',
+                          background: shareUsername === u.username ? 'rgba(155, 92, 255, 0.2)' : 'rgba(255, 255, 255, 0.05)',
+                          border: `1px solid ${shareUsername === u.username ? '#9b5cff' : 'rgba(255, 255, 255, 0.1)'}`,
+                          padding: '6px 12px', borderRadius: '20px', cursor: 'pointer',
+                          color: shareUsername === u.username ? '#fff' : '#aaa', fontSize: '13px', whiteSpace: 'nowrap', transition: '0.2s'
+                        }}
+                      >
+                        {/* Chhota Avatar */}
+                        <div style={{ width: '22px', height: '22px', background: shareUsername === u.username ? '#9b5cff' : '#333', color: '#fff', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '10px', fontWeight: 'bold' }}>
+                          {u.username.charAt(0).toUpperCase()}
+                        </div>
+                        {u.username}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <label style={{ fontSize: "12px", color: "#888", display: "block", marginTop: "10px", marginBottom: "8px", fontWeight: "700", letterSpacing: "0.5px" }}>PERSONAL MESSAGE (OPTIONAL)</label>
+              <textarea 
+                value={shareMessage}
+                onChange={(e) => setShareMessage(e.target.value)}
+                style={{ width: "93%", padding: "14px", borderRadius: "8px", background: "#1a1a24", border: "1px solid #333", color: "#fff", height: "80px", resize: "none", outline: "none", fontSize: "14px" }}
+              />
+            </div>
+
+            {shareStatus && (
+              <div style={{ 
+                padding: "12px", 
+                borderRadius: "8px", 
+                background: shareStatus.type === "error" ? "rgba(255, 71, 87, 0.1)" : "rgba(46, 213, 115, 0.1)", 
+                color: shareStatus.type === "error" ? "#ff4757" : "#2ed573", 
+                fontSize: "14px", 
+                marginTop: "10px",
+                border: `1px solid ${shareStatus.type === "error" ? "rgba(255, 71, 87, 0.3)" : "rgba(46, 213, 115, 0.3)"}`,
+                display: 'flex', alignItems: 'center', gap: '8px'
+              }}>
+                {shareStatus.type === "success" && <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>}
+                {shareStatus.type === "error" && <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>}
+                {shareStatus.msg}
+              </div>
+            )}
+
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: "12px", marginTop: "25px" }}>
+              <button 
+                onClick={() => setShowShareModal(false)} 
+                style={{ padding: "10px 20px", background: "transparent", color: "#aaa", border: "none", borderRadius: "8px", cursor: "pointer", fontWeight: "600" }}
+              >
+                Cancel
+              </button>
+              <button 
+                onClick={handleShareMovie} 
+                disabled={shareStatus?.type === "loading"}
+                style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: "10px 24px", background: "#9b5cff", color: "#fff", border: "none", borderRadius: "8px", cursor: "pointer", fontWeight: "bold", opacity: shareStatus?.type === "loading" ? 0.7 : 1 }}
+              >
+                {shareStatus?.type === "loading" ? "Sending..." : (
+                  <><span>Send</span><svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" strokeWidth="2.5" fill="none" strokeLinecap="round" strokeLinejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg></>
+                )}
+              </button>
+            </div>
+
+            <button className="close-modal-x" onClick={() => setShowShareModal(false)}>✕</button>
           </div>
         </div>
       )}

@@ -16,50 +16,58 @@ load_dotenv()
 home_bp = Blueprint("home", __name__)
 
 # =====================================================================
-# 🚀 DYNAMIC HELPER FUNCTIONS (SMART SHUFFLING: TOP 50 POOL -> RAND)
+# 🚀 DYNAMIC HELPER FUNCTIONS (SMART SHUFFLING + HIDE RATED MOVIES)
 # =====================================================================
 
-def get_dynamic_new_releases(genre_ids_tuple):
+def get_dynamic_new_releases(genre_ids_tuple, user_id):
     if not genre_ids_tuple:
         return []
+    
     with engine.connect() as conn:
         new_query = text("""
             SELECT * FROM (
                 SELECT m.movie_id, m.title, m.release_year, m.overview, m.avg_rating, m.poster_url
                 FROM movies m
-                WHERE m.avg_rating >= 3.0 
+                WHERE (m.avg_rating >= 3.0 OR m.avg_rating = 0 OR m.avg_rating IS NULL)
                   AND m.poster_url IS NOT NULL
-                  AND m.release_year >= 2023
+                  /* Yahan strictly 2024 aur 2025 ki range lock kar di */
+                  AND m.release_year BETWEEN 2024 AND 2025
+                  AND m.movie_id NOT IN (SELECT movie_id FROM reviews WHERE user_id = :uid)
                   AND EXISTS (
                       SELECT 1 FROM movie_genres mg
                       WHERE mg.movie_id = m.movie_id AND mg.genre_id IN :gids
                   )
-                ORDER BY m.avg_rating DESC
+                ORDER BY m.release_year DESC, m.avg_rating DESC
                 LIMIT 40
             ) AS top_recent
             ORDER BY RAND() 
             LIMIT 15
         """).bindparams(bindparam("gids", expanding=True))
-        return [dict(row) for row in conn.execute(new_query, {"gids": genre_ids_tuple}).mappings().all()]
+        
+        return [dict(row) for row in conn.execute(new_query, {
+            "gids": genre_ids_tuple, 
+            "uid": user_id
+        }).mappings().all()]
 
-def get_dynamic_top_rated():
+def get_dynamic_top_rated(user_id):
     with engine.connect() as conn:
         top_query = text("""
             SELECT * FROM (
-                SELECT movie_id, title, release_year, overview, avg_rating, poster_url
-                FROM movies
-                WHERE avg_rating >= 4.0 
-                  AND poster_url IS NOT NULL
-                  AND release_year >= 1990
-                ORDER BY avg_rating DESC
+                SELECT m.movie_id, m.title, m.release_year, m.overview, m.avg_rating, m.poster_url
+                FROM movies m
+                WHERE m.avg_rating >= 4.0 
+                  AND m.poster_url IS NOT NULL
+                  AND m.release_year >= 1990
+                  AND m.movie_id NOT IN (SELECT movie_id FROM reviews WHERE user_id = :uid)
+                ORDER BY m.avg_rating DESC
                 LIMIT 50
             ) AS top_all_time
             ORDER BY RAND()
             LIMIT 15
         """)
-        return [dict(row) for row in conn.execute(top_query).mappings().all()]
+        return [dict(row) for row in conn.execute(top_query, {"uid": user_id}).mappings().all()]
 
-def get_dynamic_recommended(genre_ids_tuple):
+def get_dynamic_recommended(genre_ids_tuple, user_id):
     if not genre_ids_tuple:
         return []
     with engine.connect() as conn:
@@ -70,6 +78,7 @@ def get_dynamic_recommended(genre_ids_tuple):
                 WHERE m.avg_rating >= 3.5 
                   AND m.poster_url IS NOT NULL
                   AND m.release_year >= 1990
+                  AND m.movie_id NOT IN (SELECT movie_id FROM reviews WHERE user_id = :uid)
                   AND EXISTS (
                       SELECT 1 FROM movie_genres mg
                       WHERE mg.movie_id = m.movie_id AND mg.genre_id IN :gids
@@ -80,9 +89,9 @@ def get_dynamic_recommended(genre_ids_tuple):
             ORDER BY RAND() 
             LIMIT 15
         """).bindparams(bindparam("gids", expanding=True))
-        return [dict(row) for row in conn.execute(rec_query, {"gids": genre_ids_tuple}).mappings().all()]
+        return [dict(row) for row in conn.execute(rec_query, {"gids": genre_ids_tuple, "uid": user_id}).mappings().all()]
 
-def get_dynamic_genre_movies(gid):
+def get_dynamic_genre_movies(gid, user_id):
     with engine.connect() as conn:
         sec_query = text("""
             SELECT * FROM (
@@ -91,6 +100,7 @@ def get_dynamic_genre_movies(gid):
                 WHERE m.avg_rating >= 3.5 
                   AND m.poster_url IS NOT NULL
                   AND m.release_year >= 1990
+                  AND m.movie_id NOT IN (SELECT movie_id FROM reviews WHERE user_id = :uid)
                   AND EXISTS (
                       SELECT 1 FROM movie_genres mg
                       WHERE mg.movie_id = m.movie_id AND mg.genre_id = :gid
@@ -101,7 +111,7 @@ def get_dynamic_genre_movies(gid):
             ORDER BY RAND()
             LIMIT 15
         """)
-        return [dict(row) for row in conn.execute(sec_query, {"gid": gid}).mappings().all()]
+        return [dict(row) for row in conn.execute(sec_query, {"gid": gid, "uid": user_id}).mappings().all()]
 
 # =====================================================================
 # 🏠 MAIN HOME ROUTE
@@ -142,16 +152,17 @@ def home():
             genre_ids = list(genre_id_map.values())
             genre_ids_tuple = tuple(sorted(genre_ids))
             
-            new_releases = get_dynamic_new_releases(genre_ids_tuple)
-            top_rated = get_dynamic_top_rated()
-            recommended = get_dynamic_recommended(genre_ids_tuple)
+            # 🔥 Pass user_id to all helper functions to filter out rated movies
+            new_releases = get_dynamic_new_releases(genre_ids_tuple, user_id)
+            top_rated = get_dynamic_top_rated(user_id)
+            recommended = get_dynamic_recommended(genre_ids_tuple, user_id)
 
             genre_sections = []
             for genre_name in selected_genres_db:
                 gid = genre_id_map.get(genre_name)
                 if not gid:
                     continue
-                sec_movies = get_dynamic_genre_movies(gid)
+                sec_movies = get_dynamic_genre_movies(gid, user_id)
                 display_name = "Sci-Fi" if genre_name == "Science Fiction" else genre_name
                 genre_sections.append({"genre": display_name, "movies": sec_movies})
 
@@ -170,6 +181,7 @@ def home():
                             WHERE m.avg_rating >= 3.5
                               AND m.poster_url IS NOT NULL
                               AND m.release_year >= 1990
+                              AND m.movie_id NOT IN (SELECT movie_id FROM reviews WHERE user_id = :uid)
                               AND EXISTS (
                                   SELECT 1 FROM movie_genres mg
                                   WHERE mg.movie_id = m.movie_id AND mg.genre_id = :gid
@@ -180,20 +192,21 @@ def home():
                         ORDER BY RAND()
                         LIMIT 15
                     """)
-                    because_you_love = [dict(row) for row in conn.execute(dyn_query, {"gid": dyn_gid}).mappings().all()]
+                    because_you_love = [dict(row) for row in conn.execute(dyn_query, {"gid": dyn_gid, "uid": user_id}).mappings().all()]
 
             hidden_gems_query = text("""
                 SELECT * FROM (
-                    SELECT movie_id, title, release_year, overview, avg_rating, poster_url
-                    FROM movies
-                    WHERE poster_url IS NOT NULL
+                    SELECT m.movie_id, m.title, m.release_year, m.overview, m.avg_rating, m.poster_url
+                    FROM movies m
+                    WHERE m.poster_url IS NOT NULL
+                      AND m.movie_id NOT IN (SELECT movie_id FROM reviews WHERE user_id = :uid)
                     ORDER BY avg_rating DESC
                     LIMIT 40
                 ) AS top_gems
                 ORDER BY RAND()
                 LIMIT 15
             """)
-            hidden_gems = [dict(row) for row in conn.execute(hidden_gems_query).mappings().all()]
+            hidden_gems = [dict(row) for row in conn.execute(hidden_gems_query, {"uid": user_id}).mappings().all()]
             
         return jsonify({
             "user_id": user_id,
@@ -294,8 +307,12 @@ def explore_movies():
             query_str += " WHERE m.poster_url IS NOT NULL AND m.release_year <= :current_year "
 
             if genre and genre != "All":
-                query_str += " AND g.genre_name = :genre "
-                params["genre"] = genre
+                # Frontend 'Sci-Fi' bhejta hai, DB me 'Science Fiction' hota hai
+                mapped_genre = "Science Fiction" if genre == "Sci-Fi" else genre
+                
+                # LIKE operator use kiya taaki strictly match ho jaye
+                query_str += " AND g.genre_name LIKE :genre "
+                params["genre"] = f"%{mapped_genre}%"
 
             if lang != "All":
                 query_str += """
@@ -476,3 +493,91 @@ def get_surprise_movie():
     except Exception as e:
         print("Surprise Error:", e)
         return jsonify({"error": "Failed to fetch surprise movie"}), 500
+
+
+# =====================================================================
+# 📩 INBOX & SOCIAL SHARE ROUTES (THE WOW FACTOR)
+# =====================================================================
+
+@home_bp.route("/share/movie", methods=["POST"])
+@token_required
+def share_movie():
+    sender_id = g.user_id
+    data = request.get_json()
+    
+    receiver_username = data.get("username")
+    movie_id = data.get("movie_id")
+    message = data.get("message", "Hey, check out this movie! I think you'll love it.")
+
+    if not receiver_username or not movie_id:
+        return jsonify({"error": "Username and Movie ID are required"}), 400
+
+    try:
+        with engine.begin() as conn:
+            # 1. Pehle check karo ki dost ka username exist karta hai ya nahi
+            receiver = conn.execute(
+                text("SELECT user_id FROM users WHERE username = :uname"), 
+                {"uname": receiver_username}
+            ).mappings().first()
+
+            if not receiver:
+                return jsonify({"error": f"User '@{receiver_username}' not found!"}), 404
+            
+            if receiver["user_id"] == sender_id:
+                return jsonify({"error": "You cannot share a movie with yourself!"}), 400
+
+            # 2. Movie share kar do
+            conn.execute(text("""
+                INSERT INTO shared_movies (sender_id, receiver_id, movie_id, message)
+                VALUES (:sid, :rid, :mid, :msg)
+            """), {
+                "sid": sender_id, 
+                "rid": receiver["user_id"], 
+                "mid": movie_id, 
+                "msg": message
+            })
+        
+        return jsonify({"message": f"Movie shared with @{receiver_username} successfully!"}), 200
+
+    except Exception as e:
+        print("Share Error:", e)
+        return jsonify({"error": "Failed to share movie"}), 500
+
+
+@home_bp.route("/inbox", methods=["GET"])
+@token_required
+def get_inbox():
+    user_id = g.user_id
+    
+    try:
+        with engine.connect() as conn:
+            query = text("""
+                SELECT s.share_id, s.movie_id, s.message, s.created_at, s.is_read,
+                       u.username as sender_name, m.title, m.poster_url
+                FROM shared_movies s
+                JOIN users u ON s.sender_id = u.user_id
+                JOIN movies m ON s.movie_id = m.movie_id
+                WHERE s.receiver_id = :uid
+                ORDER BY s.created_at DESC
+            """)
+            inbox_messages = [dict(row) for row in conn.execute(query, {"uid": user_id}).mappings().all()]
+            
+        return jsonify({"inbox": inbox_messages}), 200
+
+    except Exception as e:
+        print("Inbox Error:", e)
+        return jsonify({"error": "Failed to load inbox"}), 500
+
+
+@home_bp.route("/users", methods=["GET"])
+@token_required
+def get_platform_users():
+    try:
+        with engine.connect() as conn:
+            # Khud ko chhod kar baaki 20 users nikal lo suggestions ke liye
+            query = text("SELECT username FROM users WHERE user_id != :uid LIMIT 20")
+            users = [dict(row) for row in conn.execute(query, {"uid": g.user_id}).mappings().all()]
+        return jsonify({"users": users}), 200
+    except Exception as e:
+        print("Users Fetch Error:", e)
+        return jsonify({"error": "Failed to fetch users"}), 500

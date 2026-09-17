@@ -1,3 +1,6 @@
+/* 🔥 GOOGLE FONTS FOR NEXUS (Cinzel & Montserrat) */
+@import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@700&family=Montserrat:wght@300;400&display=swap');
+
 /* =========================================
    GLOBAL NAVBAR & HEADER
 ========================================= */
@@ -15,20 +18,37 @@
   pointer-events: auto !important;
 }
 
-.logo {
-  font-size: 24px;
-  font-weight: 800;
-  letter-spacing: 1px;
-  color: #ffffff;
+/* =========================================
+   🚀 NEXUS LOGO STYLING
+========================================= */
+.navbar-logo-container {
+  display: flex;
+  align-items: center;
   text-decoration: none;
 }
 
-.logo span {
-  color: #9b5cff;
+.nexus-logo {
+  font-family: 'Cinzel', serif; /* Classy Cinematic Font */
+  font-size: 2.2rem;
+  font-weight: 700;
+  color: #ffffff; /* White color for premium look */
+  text-decoration: none;
+  letter-spacing: 6px; /* Text ke beech gap premium lagta hai */
+  text-shadow: 0px 0px 10px rgba(255, 255, 255, 0.3); /* Halka sa glow */
+}
+
+.nexus-tagline {
+  font-family: 'Montserrat', sans-serif;
+  font-size: 0.85rem;
+  font-weight: 300;
+  color: #aaaaaa;
+  margin-left: 12px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
 }
 
 /* =========================================
-   🚀 BUTTERY SMOOTH HOVER ANIMATION (PURE CSS)
+   🚀 BUTTERY SMOOTH HOVER ANIMATION
 ========================================= */
 .header-actions {
   display: flex;
@@ -40,7 +60,7 @@
 .nav-item {
   display: flex;
   align-items: center;
-  gap: 0px; /* Hidden gap */
+  gap: 0px; 
   padding: 8px 14px;
   border-radius: 10px;
   color: #aaa;
@@ -50,7 +70,7 @@
   cursor: pointer;
   background: transparent;
   border: 1px solid transparent;
-  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1); /* Smooth Easing */
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1); 
 }
 
 .nav-text {
@@ -61,7 +81,6 @@
   transition: all 0.7s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-/* Jab mouse aayega, sab kuch instantly bada ho jayega */
 .nav-item:hover, .nav-item.active {
   gap: 8px;
   background: rgba(155, 92, 255, 0.15);
@@ -142,7 +161,7 @@
 }
 
 .dropdown-item:hover {
-  background: rgba(155, 92, 255, 0.1); /* Slight purple tint on hover */
+  background: rgba(155, 92, 255, 0.1); 
   color: #fff;
 }
 
@@ -151,7 +170,7 @@
 }
 
 .dropdown-item.logout-btn:hover {
-  background: rgba(255, 71, 87, 0.1); /* Slight red tint on logout hover */
+  background: rgba(255, 71, 87, 0.1); 
   color: #ff4757;
 }
 
@@ -166,7 +185,6 @@
   box-shadow: 0 20px 40px rgba(0, 0, 0, 0.8) !important;
 }
 
-/* Ugly White Scrollbar Fix */
 .custom-dropdown::-webkit-scrollbar {
   width: 5px;
 }
@@ -179,5 +197,5 @@
   border-radius: 10px;
 }
 .custom-dropdown::-webkit-scrollbar-thumb:hover {
-  background: rgba(155, 92, 255, 0.5); /* Purple tint on hover */
+  background: rgba(155, 92, 255, 0.5); 
 }
