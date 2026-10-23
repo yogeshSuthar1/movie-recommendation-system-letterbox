@@ -1,14 +1,14 @@
 import React from "react";
-import Signup from "./pages/Signup";
+import Signup from "./pages/signup";
 import GenreSelection from "./pages/GenreSelection";
-import Home from "./pages/home";
+import Home from "./pages/Home";
 import MovieDetail from './pages/MovieDetail';
 import Profile from './pages/profile';
 import MonthlyReview from './pages/MonthlyReview';
 import Watchlist from './pages/Watchlist';
 import ActorProfile from "./pages/ActorProfile";
 import ExploreMovies from "./pages/ExploreMovies";
-
+import Chat from "./components/Chat";
 
 import {
   BrowserRouter,
@@ -53,6 +53,7 @@ function App() {
         <Route path="/watchlist" element={<Watchlist />} />
         <Route path="/actor/:actorName" element={<ActorProfile />} />
         <Route path="/explore" element={<ExploreMovies />} />
+        <Route path="/messages" element={<Chat />} />
         
 
       </Routes>

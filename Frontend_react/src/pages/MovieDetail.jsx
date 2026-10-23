@@ -15,6 +15,7 @@ import SearchModal from "../components/SearchModal";
 import Navbar from "../components/Navbar";
 import "../styles/movieDetail.css";
 import CinematicLoader from "../components/CinematicLoader";
+import { io } from "socket.io-client"; // 🚀 Socket.io Import
 
 export default function MovieDetail() {
   const { id } = useParams();
@@ -48,10 +49,11 @@ export default function MovieDetail() {
 
   // ✈️ SHARE MOVIE STATES
   const [showShareModal, setShowShareModal] = useState(false);
+  const [shareFriendId, setShareFriendId] = useState(null); 
   const [shareUsername, setShareUsername] = useState("");
   const [shareMessage, setShareMessage] = useState("Hey, check out this movie! I think you'll love it.");
   const [shareStatus, setShareStatus] = useState(null);
-  const [allUsers, setAllUsers] = useState([]); // All users state
+  const [allFriends, setAllFriends] = useState([]); 
 
   const handleOpenCollectionModal = async () => {
     const userId = localStorage.getItem("user_id");
@@ -67,6 +69,8 @@ export default function MovieDetail() {
   const reviewSectionRef = useRef(null);
   const currentUsername = localStorage.getItem("username");
   const token = localStorage.getItem("token");
+  const myUserId = Number(localStorage.getItem("user_id"));
+  const SOCKET_URL = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:5000";
 
   const getInitials = (name) => {
     if (!name || typeof name !== "string") return "U";
@@ -90,21 +94,20 @@ export default function MovieDetail() {
     if (success) {
       setNewColTitle("");
       setCreatingNew(false);
-      const userId = localStorage.getItem("user_id");
-      const cols = await getUserCollections(userId);
+      const cols = await getUserCollections(myUserId);
       setUserCollections(cols);
     }
   };
 
-  // 🚀 Fetch Users for Suggestions
+  // 🚀 Fetch ONLY connected friends for sharing
   useEffect(() => {
     if (showShareModal && token) {
-      fetch("http://127.0.0.1:5000/users", {
+      fetch(`${SOCKET_URL}/get_friends`, {
         headers: { "Authorization": `Bearer ${token}` }
       })
       .then(res => res.json())
-      .then(data => setAllUsers(data.users || []))
-      .catch(err => console.log("Failed to load users", err));
+      .then(data => setAllFriends(data.friends || []))
+      .catch(err => console.log("Failed to load friends", err));
     }
   }, [showShareModal, token]);
 
@@ -123,42 +126,47 @@ export default function MovieDetail() {
     }
   };
 
-  const handleShareMovie = async () => {
-    if (!shareUsername.trim()) {
-      setShareStatus({ type: "error", msg: "Please enter a username!" });
+  // 🚀 NAYA SHARE FUNCTION: Yeh text ki jagah JSON data bhejega jisse Chat mein Card banega
+  const handleShareMovie = () => {
+    if (!shareFriendId) {
+      setShareStatus({ type: "error", msg: "Please select a friend from the suggestions!" });
       return;
     }
-    
-    setShareStatus({ type: "loading", msg: "Sending..." });
-    try {
-      const res = await fetch("http://127.0.0.1:5000/share/movie", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          username: shareUsername,
-          movie_id: id,
-          message: shareMessage
-        })
-      });
-      
-      const data = await res.json();
-      if (res.ok) {
-        setShareStatus({ type: "success", msg: data.message });
-        setTimeout(() => {
-          setShowShareModal(false);
-          setShareStatus(null);
-          setShareUsername("");
-          setShareMessage("Hey, check out this movie! I think you'll love it.");
-        }, 2000);
-      } else {
-        setShareStatus({ type: "error", msg: data.error });
-      }
-    } catch (err) {
-      setShareStatus({ type: "error", msg: "Network Error! Is Flask running?" });
+    if (!token) {
+      setShareStatus({ type: "error", msg: "Please login to share!" });
+      return;
     }
+
+    setShareStatus({ type: "loading", msg: "Sending to chat..." });
+    
+    const tempSocket = io(SOCKET_URL);
+    
+    // 🚀 MAIN FIX YAHAN HAI: Text hatakar JSON banaya hai
+    const sharePayload = JSON.stringify({
+      isMovieShare: true,
+      movieId: id,
+      movieTitle: movie.title,
+      posterUrl: movie.poster_url,
+      userMessage: shareMessage.trim()
+    });
+
+    tempSocket.emit("send_message", {
+      token: token,
+      sender_id: myUserId,
+      receiver_id: shareFriendId,
+      message: sharePayload
+    });
+
+    setShareStatus({ type: "success", msg: "Sent to Chat! 🚀" });
+    
+    setTimeout(() => {
+      tempSocket.disconnect();
+      setShowShareModal(false);
+      setShareStatus(null);
+      setShareUsername("");
+      setShareFriendId(null);
+      setShareMessage("Hey, check out this movie! I think you'll love it.");
+    }, 1500);
   };
 
   useEffect(() => {
@@ -284,12 +292,15 @@ export default function MovieDetail() {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '15px' }}>
               <div>
                 <div className="md-meta-top">
-                  <span>Movie</span> • <span>{movie.release_year}</span> • <span>{movie.runtime_minutes || "120"} mins</span> • <span>Directed by {movie.director || "Unknown"}</span>
+                  <span>Movie</span>
+                  <span>{movie.release_year}</span>
+                  <span>{movie.runtime_minutes || "120"} mins</span>
+                  <span>Directed by {movie.director || "Unknown"}</span>
                 </div>
                 <h1 className="md-backdrop-title" style={{ marginTop: '5px' }}>{movie.title}</h1>
               </div>
 
-              {/* 🚀 PREMIUM SHARE BUTTON (Top Right) */}
+              {/* 🚀 PREMIUM SHARE BUTTON */}
               <button 
                 onClick={() => setShowShareModal(true)}
                 style={{
@@ -790,7 +801,7 @@ export default function MovieDetail() {
             </h3>
 
             <div style={{ padding: "10px 0" }}>
-              <label style={{ fontSize: "12px", color: "#888", display: "block", marginBottom: "8px", fontWeight: "700", letterSpacing: "0.5px" }}>FRIEND'S EXACT USERNAME</label>
+              <label style={{ fontSize: "12px", color: "#888", display: "block", marginBottom: "8px", fontWeight: "700", letterSpacing: "0.5px" }}>SEARCH FRIEND'S USERNAME</label>
               <input 
                 type="text" 
                 value={shareUsername}
@@ -801,27 +812,30 @@ export default function MovieDetail() {
               />
 
               {/* 🚀 SUGGESTED FRIENDS CHIPS (INSTA STYLE) */}
-              {allUsers.length > 0 && (
+              {allFriends.length > 0 && (
                 <div style={{ marginTop: "12px", marginBottom: "20px" }}>
-                  <span style={{ fontSize: "11px", color: "#888", fontWeight: "600", textTransform: "uppercase", letterSpacing: "0.5px" }}>Suggested Friends</span>
+                  <span style={{ fontSize: "11px", color: "#888", fontWeight: "600", textTransform: "uppercase", letterSpacing: "0.5px" }}>Select a Friend to Send</span>
                   
                   <div style={{ display: 'flex', gap: '8px', overflowX: 'auto', padding: '10px 0', scrollbarWidth: 'none', WebkitOverflowScrolling: 'touch' }}>
-                    {allUsers
+                    {allFriends
                       .filter(u => u.username.toLowerCase().includes(shareUsername.toLowerCase()))
                       .map(u => (
                       <div 
-                        key={u.username}
-                        onClick={() => setShareUsername(u.username)}
+                        key={u.id}
+                        onClick={() => {
+                          setShareUsername(u.username);
+                          setShareFriendId(u.id); // 🚀 FRIEND KI ASLI ID YAHAN SAVE HOGI
+                        }}
                         style={{
                           display: 'flex', alignItems: 'center', gap: '6px',
-                          background: shareUsername === u.username ? 'rgba(155, 92, 255, 0.2)' : 'rgba(255, 255, 255, 0.05)',
-                          border: `1px solid ${shareUsername === u.username ? '#9b5cff' : 'rgba(255, 255, 255, 0.1)'}`,
+                          background: shareFriendId === u.id ? 'rgba(155, 92, 255, 0.2)' : 'rgba(255, 255, 255, 0.05)',
+                          border: `1px solid ${shareFriendId === u.id ? '#9b5cff' : 'rgba(255, 255, 255, 0.1)'}`,
                           padding: '6px 12px', borderRadius: '20px', cursor: 'pointer',
-                          color: shareUsername === u.username ? '#fff' : '#aaa', fontSize: '13px', whiteSpace: 'nowrap', transition: '0.2s'
+                          color: shareFriendId === u.id ? '#fff' : '#aaa', fontSize: '13px', whiteSpace: 'nowrap', transition: '0.2s'
                         }}
                       >
                         {/* Chhota Avatar */}
-                        <div style={{ width: '22px', height: '22px', background: shareUsername === u.username ? '#9b5cff' : '#333', color: '#fff', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '10px', fontWeight: 'bold' }}>
+                        <div style={{ width: '22px', height: '22px', background: shareFriendId === u.id ? '#9b5cff' : '#333', color: '#fff', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '10px', fontWeight: 'bold' }}>
                           {u.username.charAt(0).toUpperCase()}
                         </div>
                         {u.username}
@@ -865,11 +879,11 @@ export default function MovieDetail() {
               </button>
               <button 
                 onClick={handleShareMovie} 
-                disabled={shareStatus?.type === "loading"}
-                style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: "10px 24px", background: "#9b5cff", color: "#fff", border: "none", borderRadius: "8px", cursor: "pointer", fontWeight: "bold", opacity: shareStatus?.type === "loading" ? 0.7 : 1 }}
+                disabled={shareStatus?.type === "loading" || !shareFriendId}
+                style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: "10px 24px", background: "#9b5cff", color: "#fff", border: "none", borderRadius: "8px", cursor: shareFriendId ? "pointer" : "not-allowed", fontWeight: "bold", opacity: (shareStatus?.type === "loading" || !shareFriendId) ? 0.5 : 1 }}
               >
                 {shareStatus?.type === "loading" ? "Sending..." : (
-                  <><span>Send</span><svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" strokeWidth="2.5" fill="none" strokeLinecap="round" strokeLinejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg></>
+                  <><span>Send to Chat</span><svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" strokeWidth="2.5" fill="none" strokeLinecap="round" strokeLinejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg></>
                 )}
               </button>
             </div>

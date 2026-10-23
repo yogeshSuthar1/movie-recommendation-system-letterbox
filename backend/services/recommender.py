@@ -1,6 +1,7 @@
 import os
 import joblib
 import threading # 🚀 Yeh naya import hai
+import pandas as pd # 🚀 ML Crash fix ke liye pandas zaroori hai
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
 MODELS_DIR = os.path.join(BASE_DIR, "models")
@@ -45,6 +46,10 @@ def recommend(movie_name, start=0, limit=20):
         return None
 
     idx = movie_index[movie_name]
+
+    # 🚀 ML Crash Fix: Agar ek naam ki 2 movies mil jayein, toh pehli wali ka index le lo
+    if isinstance(idx, pd.Series):
+        idx = int(idx.iloc[0])
 
     distances, indices = knn.kneighbors(
         tfidf_matrix[idx],

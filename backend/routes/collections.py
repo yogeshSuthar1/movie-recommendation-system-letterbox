@@ -1,3 +1,4 @@
+# File Path: backend/routes/collections.py
 from flask import Blueprint, jsonify, request, g
 from sqlalchemy import text
 from backend.database import engine
@@ -10,7 +11,7 @@ collections_bp = Blueprint("collections", __name__)
 @token_required
 def create_collection():
     user_id = g.user_id
-    data = request.get_json()
+    data = request.get_json() or {}
     title = data.get("title", "").strip()
     description = data.get("description", "").strip()
 
@@ -29,6 +30,7 @@ def create_collection():
 
     return jsonify({"message": "Collection created successfully", "collection_id": collection_id}), 201
 
+
 # 2. Get user's collections
 @collections_bp.route("/user/<int:user_id>/collections", methods=["GET"])
 def get_user_collections(user_id):
@@ -46,18 +48,31 @@ def get_user_collections(user_id):
 
     return jsonify([dict(c) for c in collections]), 200
 
-# 3. Add movie to collection
-# Movie ko collection mein add karne ka route
+
+# 3. Add movie to collection (With Ownership Security Check)
 @collections_bp.route("/collections/<int:collection_id>/movies", methods=["POST"])
 @token_required
 def add_movie_to_collection(collection_id):
-    data = request.get_json()
+    user_id = g.user_id
+    data = request.get_json() or {}
     movie_id = data.get("movie_id")
 
     if not movie_id:
         return jsonify({"error": "Movie ID is required"}), 400
 
     with engine.begin() as conn:
+        # 🚀 SECURITY FIX: Check ki yeh collection logged-in user ki hi hai
+        col_owner = conn.execute(
+            text("SELECT user_id FROM collections WHERE collection_id = :cid"),
+            {"cid": collection_id}
+        ).fetchone()
+
+        if not col_owner:
+            return jsonify({"error": "Collection not found"}), 404
+
+        if int(col_owner[0]) != int(user_id):
+            return jsonify({"error": "Unauthorized: You can only edit your own collections"}), 403
+
         # Check agar movie pehle se us collection mein hai
         exists = conn.execute(
             text("SELECT id FROM collection_movies WHERE collection_id = :cid AND movie_id = :mid"),
@@ -75,10 +90,10 @@ def add_movie_to_collection(collection_id):
     return jsonify({"message": "Movie added to collection successfully"}), 200
 
 
+# 4. Get collection details
 @collections_bp.route("/collections/<int:collection_id>", methods=["GET"])
 def get_collection_details(collection_id):
     with engine.connect() as conn:
-        # Collection ki info nikalo
         col = conn.execute(
             text("SELECT collection_id, title, description, created_at FROM collections WHERE collection_id = :cid"),
             {"cid": collection_id}
@@ -87,7 +102,6 @@ def get_collection_details(collection_id):
         if not col:
             return jsonify({"error": "Collection not found"}), 404
 
-        # Us collection ke andar jitni movies hain unki details nikalo
         movies = conn.execute(
             text("""
                 SELECT m.movie_id, m.title, m.release_year, m.runtime_minutes, m.poster_url, m.avg_rating
