@@ -50,7 +50,6 @@ backend/config.py
 backend/database.py
 backend/extensions.py
 backend/middleware/auth_middleware.py
-backend/ml_engine.py
 backend/routes/__init__.py
 backend/routes/auth.py
 backend/routes/collections.py
@@ -64,19 +63,14 @@ backend/routes/recommendation.py
 backend/routes/review.py
 backend/routes/search.py
 backend/routes/watchlist.py
-backend/scripts/import_actors.py
-backend/scripts/import_countries.py
-backend/scripts/import_director.py
 backend/scripts/import_genres.py
-backend/scripts/import_language.py
 backend/scripts/import_movies.py
-backend/scripts/import_producers.py
 backend/scripts/import_table.py
-backend/scripts/import_theme.py
 backend/services/__init__.py
 backend/services/movie_service.py
 backend/services/recommender.py
 backend/services/search.py
+backend/sql/001_migration.sql
 backend/sql/create_table.sql
 backend/utils/__init__.py
 Frontend_react/.gitignore
@@ -104,6 +98,8 @@ Frontend_react/src/components/MovieRow.jsx
 Frontend_react/src/components/Navbar.jsx
 Frontend_react/src/components/PosterAnimation.jsx
 Frontend_react/src/components/SearchModal.jsx
+Frontend_react/src/components/SkeletonLoader.jsx
+Frontend_react/src/config/api.js
 Frontend_react/src/main.jsx
 Frontend_react/src/pages/ActorProfile.jsx
 Frontend_react/src/pages/ExploreMovies.jsx
@@ -130,6 +126,7 @@ Frontend_react/src/styles/posterAnimation.css
 Frontend_react/src/styles/profile.css
 Frontend_react/src/styles/searchModal.css
 Frontend_react/src/styles/signup.css
+Frontend_react/src/styles/skeleton.css
 Frontend_react/src/styles/watchlist.css
 Frontend_react/vite.config.js
 notebook/.virtual_documents/08_database_setup.ipynb
@@ -150,553 +147,481 @@ requirements.txt
 <files>
 This section contains the contents of the repository's files.
 
-<file path="backend/chat_routes.py">
-# chat_routes.py
-from flask import Blueprint, request, jsonify
-from sqlalchemy import text
-from backend.database import engine as db
-# from auth_middleware import token_required  # Apna token middleware import kar lena
+<file path="backend/sql/001_migration.sql">
+USE movieverse_db;
 
-chat_bp = Blueprint('chat_bp', __name__)
+-- 1. Purane duplicate reviews delete karo taaki UNIQUE KEY fail na ho
+DELETE r1 FROM reviews r1
+INNER JOIN reviews r2 
+WHERE r1.review_id > r2.review_id 
+  AND r1.user_id = r2.user_id 
+  AND r1.movie_id = r2.movie_id;
 
-@chat_bp.route('/chat_history/<int:friend_id>', methods=['GET'])
-# @token_required
-def get_chat_history(friend_id):
-    current_user_id = request.args.get('user_id') # Real app mein token se aayega
-    
-    with db.connect() as conn:
-        query = text("""
-            SELECT sender_id, receiver_id, message, sent_at 
-            FROM chat_messages 
-            WHERE (sender_id = :me AND receiver_id = :friend) 
-               OR (sender_id = :friend AND receiver_id = :me)
-            ORDER BY sent_at ASC
-        """)
-        result = conn.execute(query, {"me": current_user_id, "friend": friend_id}).fetchall()
-        
-        chat_history = []
-        for row in result:
-            chat_history.append({
-                "sender_id": row[0],
-                "receiver_id": row[1],
-                "message": row[2],
-                "sent_at": row[3]
-            })
-            
-    return jsonify({"history": chat_history}), 200
+-- 2. Reviews par UNIQUE constraint lagao
+ALTER TABLE reviews ADD UNIQUE KEY IF NOT EXISTS uq_user_movie_review (user_id, movie_id);
 
-
-@chat_bp.route('/get_friends/<int:user_id>', methods=['GET'])
-def get_friends(user_id):
-    with db.connect() as conn:
-        # DISTINCT lagaya hai taaki agar dono ek dusre ko follow karte hain toh naam 2 baar na aaye
-        query = text("""
-            SELECT DISTINCT u.user_id, u.username, u.profile_image
-            FROM users u
-            JOIN followers f ON (f.follower_id = u.user_id OR f.following_id = u.user_id)
-            WHERE (f.follower_id = :uid OR f.following_id = :uid)
-              AND u.user_id != :uid
-        """)
-        result = conn.execute(query, {"uid": user_id}).fetchall()
-        
-        friends = []
-        for row in result:
-            # Agar database mein profile_image nahi hai, toh username ka pehla letter use karenge
-            profile_image = row[2]
-            avatar = profile_image if profile_image else row[1][0].upper()
-            
-            friends.append({
-                "id": row[0],
-                "username": row[1],
-                "avatar": avatar,
-                "has_image": bool(profile_image) # Frontend ko batane ke liye ki asli image hai ya text
-            })
-            
-    return jsonify({"friends": friends}), 200
+-- 3. Users table mein OTP columns update karo
+ALTER TABLE users MODIFY COLUMN otp VARCHAR(255) NULL;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS otp_expires_at DATETIME NULL;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS otp_attempts INT DEFAULT 0;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS reset_otp VARCHAR(255) NULL;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS reset_otp_expires_at DATETIME NULL;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS reset_otp_attempts INT DEFAULT 0;
 </file>
 
-<file path="backend/chat_sockets.py">
-# chat_sockets.py
-from flask_socketio import join_room, emit
-from sqlalchemy import text
-from backend.database import engine as db# Tera database connection file
+<file path="Frontend_react/src/components/SkeletonLoader.jsx">
+// File Path: Frontend_react/src/components/SkeletonLoader.jsx
+import React from 'react';
+import '../styles/skeleton.css';
 
-def register_chat_sockets(socketio):
-    
-    @socketio.on('join_chat')
-    def handle_join(data):
-        user_id = data.get('user_id')
-        if user_id:
-            room = f"user_{user_id}"
-            join_room(room)
-            print(f"User {user_id} joined room {room}")
-
-    @socketio.on('send_message')
-    def handle_send_message(data):
-        sender_id = data.get('sender_id')
-        receiver_id = data.get('receiver_id')
-        message_text = data.get('message')
-
-        # 1. Message ko MySQL database mein save karna
-        with db.connect() as conn:
-            query = text("""
-                INSERT INTO chat_messages (sender_id, receiver_id, message) 
-                VALUES (:sender_id, :receiver_id, :message)
-            """)
-            conn.execute(query, {"sender_id": sender_id, "receiver_id": receiver_id, "message": message_text})
-            conn.commit()
-
-        # 2. Live message receiver ke room mein bhej dena
-        emit('receive_message', {
-            'sender_id': sender_id,
-            'receiver_id': receiver_id,
-            'message': message_text
-        }, room=f"user_{receiver_id}")
-        
-        print(f"Message sent from {sender_id} to {receiver_id}")
-</file>
-
-<file path="Frontend_react/src/components/Chat.jsx">
-import React, { useState, useEffect } from "react";
-import { io } from "socket.io-client";
-import "../styles/Chat.css"; 
-
-const SOCKET_URL = "http://127.0.0.1:5000";
-
-const Chat = () => {
-  const [socket, setSocket] = useState(null);
-  const [messages, setMessages] = useState([]);
-  const [newMessage, setNewMessage] = useState("");
-  const [friendsList, setFriendsList] = useState([]); // Real friends store honge
-  const [activeFriend, setActiveFriend] = useState(null);
-  
-  const myUserId = 1; // Yahan baad mein localStorage se apni ID daal dena
-
-  // 1. Database se Real Friends load karo
-  useEffect(() => {
-    fetch(`${SOCKET_URL}/get_friends/${myUserId}`)
-      .then((res) => res.json())
-      .then((data) => {
-        if (data.friends && data.friends.length > 0) {
-          setFriendsList(data.friends);
-          setActiveFriend(data.friends[0]); // Default pehle dost ko select kar lo
-        }
-      })
-      .catch((err) => console.error("Error fetching friends:", err));
-  }, []);
-
-  // 2. Socket Connection & Chat History
-  useEffect(() => {
-    if (!activeFriend) return; // Jab tak dost load na ho, socket mat chalao
-
-    const newSocket = io(SOCKET_URL);
-    setSocket(newSocket);
-
-    newSocket.emit("join_chat", { user_id: myUserId });
-
-    newSocket.on("receive_message", (data) => {
-      setMessages((prev) => [...prev, data]);
-    });
-
-    // Real history API call
-    fetch(`${SOCKET_URL}/chat_history/${activeFriend.id}?user_id=${myUserId}`)
-      .then((res) => res.json())
-      .then((data) => {
-        setMessages(data.history || []);
-      })
-      .catch((err) => console.error("Error fetching history:", err));
-
-    return () => newSocket.disconnect();
-  }, [activeFriend]);
-
-  const handleSendMessage = (e) => {
-    e.preventDefault();
-    if (!newMessage.trim() || !socket) return;
-
-    const msgData = {
-      sender_id: myUserId,
-      receiver_id: activeFriend.id,
-      message: newMessage,
-    };
-
-    socket.emit("send_message", msgData);
-    setMessages((prev) => [...prev, { ...msgData, sent_at: new Date() }]);
-    setNewMessage("");
-  };
-
+// Yeh Netflix jaisa row loader hai Home page ke liye
+export const MovieRowSkeleton = ({ count = 5 }) => {
   return (
-    <div className="nexus-chat-layout">
-      {/* --- Left Sidebar --- */}
-      <div className="nexus-sidebar">
-        <div className="sidebar-header">
-          <input type="text" placeholder="Search real friends..." className="search-bar" />
-        </div>
-        <div className="friends-list">
-          {friendsList.length === 0 ? (
-            <p style={{ padding: '20px', color: '#888' }}>No friends found in database.</p>
-          ) : (
-            friendsList.map((friend) => (
-              <div
-                key={friend.id}
-                className={`friend-tile ${activeFriend?.id === friend.id ? "active" : ""}`}
-                onClick={() => setActiveFriend(friend)}
-              >
-                <div className="avatar">
-                {friend.has_image ? (
-                    <img src={friend.avatar} alt={friend.username} style={{ width: '100%', height: '100%', borderRadius: '50%', objectFit: 'cover' }} />
-                ) : (
-                    friend.avatar
-                )}
-                </div>
-                <div className="friend-details">
-                  <h4>{friend.username}</h4>
-                </div>
-              </div>
-            ))
-          )}
-        </div>
+    <div className="skeleton-row-container">
+      <div className="skeleton-title shimmer"></div>
+      <div className="skeleton-row">
+        {[...Array(count)].map((_, i) => (
+          <div key={i} className="skeleton-card shimmer"></div>
+        ))}
       </div>
-
-      {/* --- Right Main Chat Area --- */}
-      {activeFriend ? (
-        <div className="nexus-chat-area">
-          <div className="chat-header">
-            <div className="header-info">
-              <div className="avatar">{activeFriend.avatar}</div>
-              <div>
-                <h3>{activeFriend.username}</h3>
-                <span className="status">Online</span>
-              </div>
-            </div>
-            {/* Call aur Video Call wale buttons hata diye, bas Option menu rakha hai */}
-            <div className="header-actions">
-              <button className="icon-btn">⋮</button>
-            </div>
-          </div>
-
-          <div className="chat-messages-container">
-            {messages.length === 0 ? (
-              <p style={{ textAlign: "center", color: "#666", marginTop: "20px" }}>Start chatting with {activeFriend.username}...</p>
-            ) : (
-              messages.map((msg, idx) => {
-                const isMe = msg.sender_id === myUserId;
-                return (
-                  <div key={idx} className={`message-wrapper ${isMe ? "me" : "friend"}`}>
-                    {!isMe && <div className="small-avatar">{activeFriend.avatar}</div>}
-                    <div className={`message-bubble ${isMe ? "my-bubble" : "friend-bubble"}`}>
-                      {msg.message}
-                    </div>
-                  </div>
-                );
-              })
-            )}
-          </div>
-
-          <form className="chat-input-container" onSubmit={handleSendMessage}>
-            <button type="button" className="icon-btn attachment-btn">📎</button>
-            <input
-              type="text"
-              placeholder="Type your message and press enter..."
-              value={newMessage}
-              onChange={(e) => setNewMessage(e.target.value)}
-            />
-            <button type="submit" className="send-btn" disabled={!newMessage.trim()}>Send 🚀</button>
-          </form>
-        </div>
-      ) : (
-        <div className="nexus-chat-area" style={{ justifyContent: 'center', alignItems: 'center' }}>
-          <h3>Select a friend to start chatting</h3>
-        </div>
-      )}
     </div>
   );
 };
 
-export default Chat;
+// Yeh grid loader hai Explore page ke liye
+export const MovieGridSkeleton = ({ count = 10 }) => {
+  return (
+    <div className="skeleton-grid">
+      {[...Array(count)].map((_, i) => (
+        <div key={i} className="skeleton-grid-card">
+          <div className="skeleton-poster shimmer"></div>
+          <div className="skeleton-text short shimmer"></div>
+          <div className="skeleton-text shorter shimmer"></div>
+        </div>
+      ))}
+    </div>
+  );
+};
+
+// Yeh Hero banner ka loader hai
+export const HeroSkeleton = () => {
+  return (
+    <div className="skeleton-hero">
+      <div className="skeleton-hero-content">
+        <div className="skeleton-badge shimmer"></div>
+        <div className="skeleton-hero-title shimmer"></div>
+        <div className="skeleton-hero-meta shimmer"></div>
+        <div className="skeleton-hero-desc shimmer"></div>
+        <div className="skeleton-hero-desc shorter shimmer"></div>
+        <div className="skeleton-hero-actions shimmer"></div>
+      </div>
+      <div className="skeleton-hero-poster shimmer"></div>
+    </div>
+  );
+};
 </file>
 
-<file path="Frontend_react/src/styles/Chat.css">
-/* File Path: src/style/Chat.css */
-/* Main Layout Wrapper */
-.nexus-chat-layout {
-  display: flex;
-  height: 100vh; /* Poora screen length lega (Navbar ke neeche hai toh height adjust kar lena) */
-  width: 100vw;  /* Poori width use karega */
-  margin: 0;     /* Side ka khali space hata diya */
-  background-color: #12121a;
-  overflow: hidden;
-  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-  color: #fff;
+<file path="Frontend_react/src/config/api.js">
+export const API_BASE_URL =
+  import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:5000";
+</file>
+
+<file path="Frontend_react/src/styles/skeleton.css">
+/* File Path: Frontend_react/src/styles/skeleton.css */
+.shimmer {
+    background: #1a1a24;
+    background-image: linear-gradient(to right, #1a1a24 0%, #2a2a35 20%, #1a1a24 40%, #1a1a24 100%);
+    background-repeat: no-repeat;
+    background-size: 800px 100%; 
+    animation-duration: 1.5s;
+    animation-fill-mode: forwards; 
+    animation-iteration-count: infinite;
+    animation-name: placeholderShimmer;
+    animation-timing-function: linear;
+    border-radius: 8px;
 }
 
-/* --- Sidebar Styling --- */
-.nexus-sidebar {
-  width: 380px; /* Thoda chouda sidebar */
-  background-color: #0d0d12;
-  border-right: 1px solid rgba(255,255,255,0.05);
-  display: flex;
-  flex-direction: column;
+@keyframes placeholderShimmer {
+    0% { background-position: -468px 0; }
+    100% { background-position: 468px 0; }
 }
 
-.sidebar-header {
-  padding: 25px 20px;
-  border-bottom: 1px solid rgba(255,255,255,0.05);
+/* Home Row Loader */
+.skeleton-row-container {
+    padding: 0 50px 40px 50px;
+    margin-bottom: 20px;
+}
+.skeleton-title {
+    width: 250px;
+    height: 24px;
+    margin-bottom: 20px;
+}
+.skeleton-row {
+    display: flex;
+    gap: 85px;
+    overflow: hidden;
+}
+.skeleton-card {
+    flex: 0 0 240px;
+    height: 360px;
+    border-radius: 12px;
 }
 
-.search-bar {
-  width: 100%;
-  padding: 12px 20px;
-  border-radius: 30px;
-  background-color: #1a1a24;
-  border: 1px solid rgba(255,255,255,0.08);
-  color: #fff;
-  outline: none;
-  font-size: 0.95rem;
+/* Explore Grid Loader */
+.skeleton-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 25px;
+    width: 100%;
+    margin-top: 20px;
 }
+.skeleton-grid-card {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+.skeleton-poster {
+    width: 100%;
+    aspect-ratio: 2/3;
+    border-radius: 12px;
+}
+.skeleton-text {
+    height: 16px;
+    width: 80%;
+}
+.skeleton-text.short { width: 90%; }
+.skeleton-text.shorter { width: 60%; }
 
-.friends-list {
-  overflow-y: auto;
-  flex: 1;
+/* Hero Loader */
+.skeleton-hero {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 100px 50px 50px 50px;
+    gap: 50px;
+    width: 100%;
+    max-width: 1500px;
+    margin: 0 auto;
+    min-height: 85vh;
 }
-
-.friend-tile {
-  display: flex;
-  align-items: center;
-  padding: 20px;
-  cursor: pointer;
-  border-bottom: 1px solid rgba(255,255,255,0.02);
-  transition: all 0.3s ease;
-  position: relative;
+.skeleton-hero-content {
+    flex: 1;
+    max-width: 650px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
 }
-
-.friend-tile:hover, .friend-tile.active {
-  background-color: #1a1a24;
-  border-left: 4px solid #9b5cff;
-}
-
-.avatar {
-  width: 50px;
-  height: 50px;
-  border-radius: 50%;
-  background: linear-gradient(135deg, #9b5cff, #ff4785);
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  font-weight: bold;
-  font-size: 1.2rem;
-  margin-right: 15px;
-  flex-shrink: 0;
-}
-
-.friend-details h4 {
-  margin: 0 0 5px 0;
-  font-size: 1.05rem;
-  font-weight: 600;
-}
-
-.friend-details p {
-  margin: 0;
-  font-size: 0.85rem;
-  color: #888;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 220px;
-}
-
-.online-dot {
-  width: 10px;
-  height: 10px;
-  background-color: #1db954;
-  border-radius: 50%;
-  position: absolute;
-  right: 20px;
-  top: 50%;
-  transform: translateY(-50%);
-}
-
-/* --- Chat Area Styling --- */
-.nexus-chat-area {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  background-color: #12121a;
-}
-
-.chat-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 20px 30px;
-  background-color: #0d0d12;
-  border-bottom: 1px solid rgba(255,255,255,0.05);
-}
-
-.header-info {
-  display: flex;
-  align-items: center;
-}
-
-.header-info h3 {
-  margin: 0 0 3px 0;
-  font-size: 1.2rem;
-}
-
-.header-info .status {
-  font-size: 0.85rem;
-  color: #1db954;
-}
-
-.header-actions {
-  display: flex;
-  gap: 20px;
-}
-
-.icon-btn {
-  background: none;
-  border: none;
-  color: #888;
-  font-size: 1.4rem;
-  cursor: pointer;
-  transition: color 0.2s;
-}
-
-.icon-btn:hover {
-  color: #9b5cff;
-}
-
-/* Messages Area */
-.chat-messages-container {
-  flex: 1;
-  padding: 30px;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
-}
-
-.message-wrapper {
-  display: flex;
-  align-items: flex-end;
-  max-width: 70%;
-}
-
-.message-wrapper.me {
-  align-self: flex-end;
-  flex-direction: row-reverse;
-}
-
-.small-avatar {
-  width: 35px;
-  height: 35px;
-  border-radius: 50%;
-  background: linear-gradient(135deg, #9b5cff, #ff4785);
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  font-size: 0.8rem;
-  font-weight: bold;
-  margin-right: 15px;
-}
-
-.message-wrapper.me .small-avatar {
-  margin-right: 0;
-  margin-left: 15px;
-}
-
-.message-bubble {
-  padding: 16px 22px;
-  border-radius: 25px;
-  font-size: 1rem;
-  line-height: 1.5;
-  box-shadow: 0 4px 15px rgba(0,0,0,0.2);
-}
-
-.my-bubble {
-  background: linear-gradient(135deg, #9b5cff, #7a3deb); /* Purple gradient */
-  color: white;
-  border-bottom-right-radius: 5px;
-}
-
-.friend-bubble {
-  background-color: #1e1e28; /* Dark grey */
-  color: #eee;
-  border-bottom-left-radius: 5px;
-}
-
-/* Input Area */
-.chat-input-container {
-  padding: 20px 30px;
-  background-color: #0d0d12;
-  display: flex;
-  align-items: center;
-  gap: 15px;
-  border-top: 1px solid rgba(255,255,255,0.05);
-}
-
-.chat-input-container input {
-  flex: 1;
-  background-color: #1a1a24;
-  border: 1px solid rgba(255,255,255,0.1);
-  padding: 16px 25px;
-  border-radius: 40px;
-  color: #fff;
-  font-size: 1rem;
-  outline: none;
-  transition: border 0.3s;
-}
-
-.chat-input-container input:focus {
-  border-color: #9b5cff;
-}
-
-.send-btn {
-  background-color: #9b5cff;
-  color: white;
-  border: none;
-  padding: 14px 30px;
-  border-radius: 40px;
-  font-weight: bold;
-  font-size: 1rem;
-  cursor: pointer;
-  transition: transform 0.2s, background 0.3s;
-}
-
-.send-btn:hover:not(:disabled) {
-  background-color: #8a4be2;
-  transform: scale(1.05);
-}
-
-.send-btn:disabled {
-  background-color: #333;
-  color: #666;
-  cursor: not-allowed;
-}
-
-/* Custom Scrollbar */
-::-webkit-scrollbar {
-  width: 8px;
-}
-::-webkit-scrollbar-track {
-  background: transparent;
-}
-::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.15);
-  border-radius: 10px;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.3);
-}
+.skeleton-badge { width: 150px; height: 30px; border-radius: 20px; }
+.skeleton-hero-title { width: 80%; height: 60px; }
+.skeleton-hero-meta { width: 250px; height: 25px; }
+.skeleton-hero-desc { width: 100%; height: 20px; }
+.skeleton-hero-actions { width: 350px; height: 50px; border-radius: 12px; margin-top: 20px; }
+.skeleton-hero-poster { flex-shrink: 0; width: 320px; height: 480px; border-radius: 16px; }
 </file>
 
 <file path="backend/__init__.py">
 
 </file>
 
+<file path="backend/chat_routes.py">
+# File Path: backend/chat_routes.py
+from flask import Blueprint, request, jsonify, g
+from sqlalchemy import text
+from backend.database import engine as db
+from backend.middleware.auth_middleware import token_required
+
+chat_bp = Blueprint("chat_bp", __name__)
+
+@chat_bp.route("/chat_history/<int:friend_id>", methods=["GET"])
+@token_required
+def get_chat_history(friend_id):
+    current_user_id = int(g.user_id)
+    try:
+        limit = min(200, max(1, int(request.args.get("limit", 100))))
+    except ValueError:
+        limit = 100
+
+    with db.connect() as conn:
+        query = text("""
+            SELECT * FROM (
+                SELECT sender_id, receiver_id, message, sent_at, is_read 
+                FROM chat_messages 
+                WHERE (sender_id = :me AND receiver_id = :friend) 
+                   OR (sender_id = :friend AND receiver_id = :me)
+                ORDER BY sent_at DESC
+                LIMIT :limit
+            ) AS recent_msgs
+            ORDER BY sent_at ASC
+        """)
+
+        result = conn.execute(
+            query,
+            {"me": current_user_id, "friend": friend_id, "limit": limit}
+        ).mappings().all()
+
+        chat_history = []
+        for row in result:
+            sent_val = row["sent_at"]
+            sent_str = sent_val.isoformat() if hasattr(sent_val, "isoformat") else str(sent_val or "")
+            chat_history.append({
+                "sender_id": int(row["sender_id"]),
+                "receiver_id": int(row["receiver_id"]),
+                "message": row["message"],
+                "sent_at": sent_str,
+                "is_read": bool(row["is_read"])
+            })
+
+    return jsonify({"history": chat_history}), 200
+
+
+@chat_bp.route("/get_friends", methods=["GET"])
+@token_required
+def get_friends():
+    current_user_id = int(g.user_id)
+
+    with db.connect() as conn:
+        query = text("""
+            SELECT DISTINCT u.user_id, u.username, u.profile_image
+            FROM users u
+            JOIN followers f ON (
+                (f.follower_id = :uid AND f.following_id = u.user_id)
+                OR (f.following_id = :uid AND f.follower_id = u.user_id)
+            )
+            WHERE u.user_id != :uid
+            ORDER BY u.username ASC
+        """)
+        result = conn.execute(query, {"uid": current_user_id}).mappings().all()
+
+        friends = []
+        for row in result:
+            profile_image = (row["profile_image"] or "").strip()
+            username = row["username"] or f"User {row['user_id']}"
+            avatar = profile_image if profile_image else username[0].upper()
+
+            friends.append({
+                "id": int(row["user_id"]),
+                "username": username,
+                "avatar": avatar,
+                "profile_image": profile_image,
+                "has_image": bool(profile_image)
+            })
+
+    return jsonify({"friends": friends}), 200
+</file>
+
+<file path="backend/chat_sockets.py">
+# File Path: backend/chat_sockets.py
+import json
+import jwt
+from datetime import datetime, timezone
+from flask import request
+from flask_socketio import join_room, emit
+from sqlalchemy import text
+from backend.database import engine as db
+from backend.config import JWT_SECRET_KEY
+
+online_users = {}
+
+def get_verified_user_id(data):
+    if not isinstance(data, dict):
+        return None
+    token = data.get("token")
+    if not token:
+        return None
+    try:
+        payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=["HS256"])
+        return int(payload.get("user_id") or payload.get("id"))
+    except Exception:
+        return None
+
+def register_chat_sockets(socketio):
+
+    @socketio.on("join_chat")
+    def handle_join(data):
+        user_id = get_verified_user_id(data)
+        if user_id:
+            room = f"user_{user_id}"
+            join_room(room)
+
+            if user_id not in online_users:
+                online_users[user_id] = set()
+            online_users[user_id].add(request.sid)
+            emit("online_users_list", list(online_users.keys()), broadcast=True)
+
+    @socketio.on("disconnect")
+    def handle_disconnect():
+        disconnected_uid = None
+        for uid, sids in list(online_users.items()):
+            if request.sid in sids:
+                sids.remove(request.sid)
+                if not sids:
+                    del online_users[uid]
+                    disconnected_uid = uid
+                break
+        if disconnected_uid is not None:
+            emit("online_users_list", list(online_users.keys()), broadcast=True)
+
+    @socketio.on("typing")
+    def handle_typing(data):
+        sender_id = get_verified_user_id(data)
+        if not sender_id or not isinstance(data, dict):
+            return
+        try:
+            receiver_id = int(data.get("receiver_id"))
+        except (ValueError, TypeError):
+            return
+        emit("friend_typing", {"sender_id": sender_id}, room=f"user_{receiver_id}")
+
+    @socketio.on("stop_typing")
+    def handle_stop_typing(data):
+        sender_id = get_verified_user_id(data)
+        if not sender_id or not isinstance(data, dict):
+            return
+        try:
+            receiver_id = int(data.get("receiver_id"))
+        except (ValueError, TypeError):
+            return
+        emit("friend_stop_typing", {"sender_id": sender_id}, room=f"user_{receiver_id}")
+
+    # 🚀 N5 FIX: Use socket acknowledgment callback return
+    @socketio.on("send_message")
+    def handle_send_message(data):
+        if not isinstance(data, dict):
+            return {"success": False, "error": "Invalid data format"}
+        
+        sender_id = get_verified_user_id(data)
+        receiver_id = data.get("receiver_id")
+        message_text = (data.get("message") or "").strip()
+
+        if not sender_id or not receiver_id or not message_text:
+            return {"success": False, "error": "Missing info"}
+
+        if len(message_text) > 2000:
+            message_text = message_text[:2000]
+
+        try:
+            receiver_id = int(receiver_id)
+        except (ValueError, TypeError):
+            return {"success": False, "error": "Invalid receiver ID"}
+
+        parsed_json = None
+        try:
+            parsed_json = json.loads(message_text)
+        except Exception:
+            parsed_json = None
+
+        with db.begin() as conn:
+            friend_check = conn.execute(
+                text("""
+                    SELECT 1 FROM followers 
+                    WHERE (follower_id = :sender AND following_id = :receiver)
+                       OR (follower_id = :receiver AND following_id = :sender)
+                    LIMIT 1
+                """),
+                {"sender": sender_id, "receiver": receiver_id}
+            ).fetchone()
+
+            if not friend_check:
+                return {"success": False, "error": "User is not a connection"}
+
+            if isinstance(parsed_json, dict) and parsed_json.get("isMovieShare") is not None:
+                try:
+                    movie_id = int(parsed_json.get("movieId"))
+                except (ValueError, TypeError):
+                    return {"success": False, "error": "Tampered movie ID"}
+
+                movie_row = conn.execute(
+                    text("SELECT movie_id, title, poster_url FROM movies WHERE movie_id = :mid"),
+                    {"mid": movie_id}
+                ).mappings().first()
+
+                if not movie_row:
+                    return {"success": False, "error": "Movie does not exist"}
+
+                poster_url = str(movie_row["poster_url"] or "").strip()
+                if poster_url and not poster_url.startswith(("https://", "http://")):
+                    poster_url = ""
+
+                safe_payload = {
+                    "isMovieShare": True,
+                    "movieId": int(movie_row["movie_id"]),
+                    "movieTitle": str(movie_row["title"] or "Unknown Movie"),
+                    "posterUrl": poster_url,
+                    "userMessage": str(parsed_json.get("userMessage") or "")[:300].strip()
+                }
+                message_text = json.dumps(safe_payload)
+
+            result = conn.execute(
+                text("""
+                    INSERT INTO chat_messages (sender_id, receiver_id, message, is_read) 
+                    VALUES (:sender_id, :receiver_id, :message, 0)
+                """),
+                {
+                    "sender_id": sender_id,
+                    "receiver_id": receiver_id,
+                    "message": message_text
+                }
+            )
+            msg_id = result.lastrowid
+
+        now_iso = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        msg_payload = {
+            "msg_id": msg_id,
+            "sender_id": sender_id,
+            "receiver_id": receiver_id,
+            "message": message_text,
+            "is_read": False,
+            "sent_at": now_iso
+        }
+
+        emit("receive_message", msg_payload, room=f"user_{receiver_id}")
+        emit("message_sent_ack", msg_payload, room=f"user_{sender_id}")
+
+        return {"success": True}
+
+    @socketio.on("mark_messages_read")
+    def handle_mark_read(data):
+        if not isinstance(data, dict):
+            return
+        reader_id = get_verified_user_id(data)
+        sender_id = data.get("friend_id")
+
+        if not reader_id or not sender_id:
+            return
+
+        try:
+            sender_id = int(sender_id)
+        except (ValueError, TypeError):
+            return
+
+        with db.begin() as conn:
+            result = conn.execute(
+                text("""
+                    UPDATE chat_messages 
+                    SET is_read = 1 
+                    WHERE sender_id = :sender AND receiver_id = :reader AND is_read = 0
+                """),
+                {"sender": sender_id, "reader": reader_id}
+            )
+
+        if result.rowcount > 0:
+            emit("messages_read_by_friend", {"reader_id": reader_id}, room=f"user_{sender_id}")
+</file>
+
 <file path="backend/extensions.py">
+# File Path: backend/extensions.py
 from flask_mail import Mail
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 
 mail = Mail()
+
+# 🚀 P0 FIX #3: Global Rate Limiter
+limiter = Limiter(
+    key_func=get_remote_address,
+    default_limits=["200 per minute"],
+    storage_uri="memory://"
+)
 </file>
 
 <file path="backend/middleware/auth_middleware.py">
@@ -755,328 +680,7 @@ def token_required(f):
     return decorated
 </file>
 
-<file path="backend/ml_engine.py">
-
-</file>
-
 <file path="backend/routes/__init__.py">
-
-</file>
-
-<file path="backend/routes/collections.py">
-from flask import Blueprint, jsonify, request, g
-from sqlalchemy import text
-from backend.database import engine
-from backend.middleware.auth_middleware import token_required
-
-collections_bp = Blueprint("collections", __name__)
-
-# 1. Create a new collection
-@collections_bp.route("/collections", methods=["POST"])
-@token_required
-def create_collection():
-    user_id = g.user_id
-    data = request.get_json()
-    title = data.get("title", "").strip()
-    description = data.get("description", "").strip()
-
-    if not title:
-        return jsonify({"error": "Collection title is required"}), 400
-
-    with engine.begin() as conn:
-        result = conn.execute(
-            text("""
-                INSERT INTO collections (user_id, title, description)
-                VALUES (:user_id, :title, :description)
-            """),
-            {"user_id": user_id, "title": title, "description": description}
-        )
-        collection_id = result.lastrowid
-
-    return jsonify({"message": "Collection created successfully", "collection_id": collection_id}), 201
-
-# 2. Get user's collections
-@collections_bp.route("/user/<int:user_id>/collections", methods=["GET"])
-def get_user_collections(user_id):
-    with engine.connect() as conn:
-        collections = conn.execute(
-            text("""
-                SELECT c.collection_id, c.title, c.description, c.created_at,
-                       (SELECT COUNT(*) FROM collection_movies cm WHERE cm.collection_id = c.collection_id) AS movie_count
-                FROM collections c
-                WHERE c.user_id = :user_id
-                ORDER BY c.created_at DESC
-            """),
-            {"user_id": user_id}
-        ).mappings().all()
-
-    return jsonify([dict(c) for c in collections]), 200
-
-# 3. Add movie to collection
-# Movie ko collection mein add karne ka route
-@collections_bp.route("/collections/<int:collection_id>/movies", methods=["POST"])
-@token_required
-def add_movie_to_collection(collection_id):
-    data = request.get_json()
-    movie_id = data.get("movie_id")
-
-    if not movie_id:
-        return jsonify({"error": "Movie ID is required"}), 400
-
-    with engine.begin() as conn:
-        # Check agar movie pehle se us collection mein hai
-        exists = conn.execute(
-            text("SELECT id FROM collection_movies WHERE collection_id = :cid AND movie_id = :mid"),
-            {"cid": collection_id, "mid": movie_id}
-        ).fetchone()
-
-        if exists:
-            return jsonify({"message": "Movie is already in this collection"}), 400
-
-        conn.execute(
-            text("INSERT INTO collection_movies (collection_id, movie_id) VALUES (:cid, :mid)"),
-            {"cid": collection_id, "mid": movie_id}
-        )
-
-    return jsonify({"message": "Movie added to collection successfully"}), 200
-
-
-@collections_bp.route("/collections/<int:collection_id>", methods=["GET"])
-def get_collection_details(collection_id):
-    with engine.connect() as conn:
-        # Collection ki info nikalo
-        col = conn.execute(
-            text("SELECT collection_id, title, description, created_at FROM collections WHERE collection_id = :cid"),
-            {"cid": collection_id}
-        ).mappings().first()
-
-        if not col:
-            return jsonify({"error": "Collection not found"}), 404
-
-        # Us collection ke andar jitni movies hain unki details nikalo
-        movies = conn.execute(
-            text("""
-                SELECT m.movie_id, m.title, m.release_year, m.runtime_minutes, m.poster_url, m.avg_rating
-                FROM collection_movies cm
-                JOIN movies m ON cm.movie_id = m.movie_id
-                WHERE cm.collection_id = :cid
-            """),
-            {"cid": collection_id}
-        ).mappings().all()
-
-    return jsonify({
-        "collection": dict(col),
-        "movies": [dict(m) for m in movies]
-    }), 200
-</file>
-
-<file path="backend/routes/rating.py">
-from flask import Blueprint, jsonify, request, g
-from sqlalchemy import text
-
-from backend.database import engine
-from backend.middleware.auth_middleware import token_required
-
-
-rating_bp = Blueprint("rating", __name__)
-
-
-# Add / Update rating
-@rating_bp.route("/ratings/<int:movie_id>", methods=["POST"])
-@token_required
-def rate_movie(movie_id):
-
-    user_id = g.user_id
-
-    data = request.get_json()
-
-    if not data or "rating" not in data:
-        return jsonify({
-            "error": "Rating is required"
-        }), 400
-
-    try:
-        rating = float(data["rating"])
-    except (TypeError, ValueError):
-        return jsonify({
-            "error": "Rating must be a number"
-        }), 400
-
-    # Validate rating
-    if rating < 1 or rating > 5:
-        return jsonify({
-            "error": "Rating must be between 1 and 5"
-        }), 400
-
-    if rating * 2 != int(rating * 2):
-        return jsonify({
-            "error": "Rating must be in 0.5 increments"
-        }), 400
-
-    # Check movie exists
-    with engine.connect() as conn:
-
-        movie = conn.execute(
-            text("""
-                SELECT movie_id, title
-                FROM movies
-                WHERE movie_id = :movie_id
-            """),
-            {"movie_id": movie_id}
-        ).first()
-
-    if movie is None:
-        return jsonify({
-            "error": "Movie not found"
-        }), 404
-
-    # Check if user already rated this movie
-    with engine.connect() as conn:
-
-        existing = conn.execute(
-            text("""
-                SELECT rating_id
-                FROM ratings
-                WHERE user_id = :user_id
-                AND movie_id = :movie_id
-            """),
-            {
-                "user_id": user_id,
-                "movie_id": movie_id
-            }
-        ).first()
-
-    # Update existing rating
-    if existing:
-
-        with engine.begin() as conn:
-
-            conn.execute(
-                text("""
-                    UPDATE ratings
-                    SET rating = :rating,
-                        rated_at = CURRENT_TIMESTAMP
-                    WHERE user_id = :user_id
-                    AND movie_id = :movie_id
-                """),
-                {
-                    "rating": rating,
-                    "user_id": user_id,
-                    "movie_id": movie_id
-                }
-            )
-
-        return jsonify({
-            "message": "Rating updated successfully",
-            "movie_id": movie_id,
-            "rating": rating
-        }), 200
-
-    # Insert new rating
-    with engine.begin() as conn:
-
-        conn.execute(
-            text("""
-                INSERT INTO ratings (user_id, movie_id, rating)
-                VALUES (:user_id, :movie_id, :rating)
-            """),
-            {
-                "user_id": user_id,
-                "movie_id": movie_id,
-                "rating": rating
-            }
-        )
-
-    return jsonify({
-        "message": "Rating added successfully",
-        "movie_id": movie_id,
-        "rating": rating
-    }), 201
-
-@rating_bp.route("/ratings/<int:movie_id>", methods=["GET"])
-@token_required
-def get_movie_ratings(movie_id):
-
-    with engine.connect() as conn:
-
-        movie = conn.execute(
-            text("""
-                SELECT movie_id, title, avg_rating
-                FROM movies
-                WHERE movie_id = :movie_id
-            """),
-            {"movie_id": movie_id}
-        ).first()
-
-        if movie is None:
-            return jsonify({
-                "error": "Movie not found"
-            }), 404
-
-        ratings = conn.execute(
-            text("""
-                SELECT
-                    r.rating,
-                    r.rated_at
-                FROM ratings r
-                WHERE r.movie_id = :movie_id
-                ORDER BY r.rated_at DESC
-            """),
-            {"movie_id": movie_id}
-        ).mappings().all()
-
-    rating_list = [dict(rating) for rating in ratings]
-
-    return jsonify({
-        "movie_id": movie.movie_id,
-        "title": movie.title,
-        "average_rating": movie.avg_rating,
-        "total_ratings": len(rating_list),
-        "ratings": rating_list
-    }), 200
-
-
-# Delete user's rating
-@rating_bp.route("/ratings/<int:movie_id>", methods=["DELETE"])
-@token_required
-def delete_rating(movie_id):
-
-    user_id = g.user_id
-
-    with engine.begin() as conn:
-
-        result = conn.execute(
-            text("""
-                DELETE FROM ratings
-                WHERE user_id = :user_id
-                AND movie_id = :movie_id
-            """),
-            {
-                "user_id": user_id,
-                "movie_id": movie_id
-            }
-        )
-
-    if result.rowcount == 0:
-        return jsonify({
-            "error": "Rating not found"
-        }), 404
-
-    return jsonify({
-        "message": "Rating deleted successfully",
-        "movie_id": movie_id
-    }), 200
-</file>
-
-<file path="backend/scripts/import_actors.py">
-
-</file>
-
-<file path="backend/scripts/import_countries.py">
-
-</file>
-
-<file path="backend/scripts/import_director.py">
 
 </file>
 
@@ -1105,10 +709,6 @@ genres.to_sql(
 )
 
 print(f"Imported {len(genres)} genres")
-</file>
-
-<file path="backend/scripts/import_language.py">
-
 </file>
 
 <file path="backend/scripts/import_movies.py">
@@ -1150,10 +750,6 @@ movies.to_sql(
 )
 
 print("Movies Imported Successfully")
-</file>
-
-<file path="backend/scripts/import_producers.py">
-
 </file>
 
 <file path="backend/scripts/import_table.py">
@@ -1207,284 +803,8 @@ df.to_sql(
 print("✅ Import Completed")
 </file>
 
-<file path="backend/scripts/import_theme.py">
-
-</file>
-
 <file path="backend/services/__init__.py">
 
-</file>
-
-<file path="backend/sql/create_table.sql">
-CREATE DATABASE movieverse_db;
-SHOW DATABASES;
-USE movieverse_db;
-
-CREATE TABLE movies (
-    movie_id BIGINT PRIMARY KEY,
-    title VARCHAR(255) NOT NULL,
-    release_year SMALLINT,
-    tagline TEXT,
-    overview LONGTEXT,
-    runtime_minutes SMALLINT,
-    avg_rating DECIMAL(3,2),
-    poster_url TEXT
-);
-
-
-CREATE TABLE genres (
-    genre_id INT AUTO_INCREMENT PRIMARY KEY,
-    genre_name VARCHAR(100) NOT NULL UNIQUE
-);
-
-CREATE TABLE movie_genres (
-    movie_id BIGINT,
-    genre_id INT,
-
-    PRIMARY KEY (movie_id, genre_id),
-
-    FOREIGN KEY (movie_id)
-        REFERENCES movies(movie_id)
-        ON DELETE CASCADE,
-
-    FOREIGN KEY (genre_id)
-        REFERENCES genres(genre_id)
-        ON DELETE CASCADE
-);
-
-CREATE TABLE languages (
-    language_id INT AUTO_INCREMENT PRIMARY KEY,
-    language_name VARCHAR(100) UNIQUE
-);
-
-CREATE TABLE movie_languages (
-    movie_id BIGINT,
-    language_id INT,
-
-    PRIMARY KEY (movie_id, language_id),
-
-    FOREIGN KEY (movie_id)
-        REFERENCES movies(movie_id)
-        ON DELETE CASCADE,
-
-    FOREIGN KEY (language_id)
-        REFERENCES languages(language_id)
-        ON DELETE CASCADE
-);
-
-
-SHOW TABLES;
-
-CREATE TABLE countries (
-    country_id INT AUTO_INCREMENT PRIMARY KEY,
-    country_name VARCHAR(100) NOT NULL UNIQUE
-);
-
-CREATE TABLE movie_countries (
-    movie_id BIGINT,
-    country_id INT,
-
-    PRIMARY KEY (movie_id, country_id),
-
-    FOREIGN KEY (movie_id)
-        REFERENCES movies(movie_id)
-        ON DELETE CASCADE,
-
-    FOREIGN KEY (country_id)
-        REFERENCES countries(country_id)
-        ON DELETE CASCADE
-);
-
-CREATE TABLE themes (
-    theme_id INT AUTO_INCREMENT PRIMARY KEY,
-    theme_name VARCHAR(255) NOT NULL UNIQUE
-);
-
-CREATE TABLE movie_themes (
-    movie_id BIGINT,
-    theme_id INT,
-
-    PRIMARY KEY (movie_id, theme_id),
-
-    FOREIGN KEY (movie_id)
-        REFERENCES movies(movie_id)
-        ON DELETE CASCADE,
-
-    FOREIGN KEY (theme_id)
-        REFERENCES themes(theme_id)
-        ON DELETE CASCADE
-);
-
-CREATE TABLE actors (
-    actor_id INT AUTO_INCREMENT PRIMARY KEY,
-    actor_name VARCHAR(255) NOT NULL UNIQUE
-);
-
-
-CREATE TABLE movie_actors (
-    movie_id BIGINT,
-    actor_id INT,
-    role VARCHAR(255),
-
-    PRIMARY KEY (movie_id, actor_id),
-
-    FOREIGN KEY (movie_id)
-        REFERENCES movies(movie_id)
-        ON DELETE CASCADE,
-
-    FOREIGN KEY (actor_id)
-        REFERENCES actors(actor_id)
-        ON DELETE CASCADE
-);
-
-CREATE TABLE directors (
-    director_id INT AUTO_INCREMENT PRIMARY KEY,
-    director_name VARCHAR(255) NOT NULL UNIQUE
-);
-
-CREATE TABLE movie_directors (
-    movie_id BIGINT,
-    director_id INT,
-
-    PRIMARY KEY (movie_id, director_id),
-
-    FOREIGN KEY (movie_id)
-        REFERENCES movies(movie_id)
-        ON DELETE CASCADE,
-
-    FOREIGN KEY (director_id)
-        REFERENCES directors(director_id)
-        ON DELETE CASCADE
-);
-
-CREATE TABLE producers (
-    producer_id INT AUTO_INCREMENT PRIMARY KEY,
-    producer_name VARCHAR(255) NOT NULL UNIQUE
-);
-
-CREATE TABLE movie_producers (
-    movie_id BIGINT,
-    producer_id INT,
-
-    PRIMARY KEY (movie_id, producer_id),
-
-    FOREIGN KEY (movie_id)
-        REFERENCES movies(movie_id)
-        ON DELETE CASCADE,
-
-    FOREIGN KEY (producer_id)
-        REFERENCES producers(producer_id)
-        ON DELETE CASCADE
-);
-
-CREATE TABLE users (
-    user_id INT AUTO_INCREMENT PRIMARY KEY,
-    username VARCHAR(100) NOT NULL,
-    email VARCHAR(255) NOT NULL UNIQUE,
-    password_hash VARCHAR(255) NOT NULL,
-    profile_image TEXT,
-    bio TEXT,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE TABLE ratings (
-    rating_id BIGINT AUTO_INCREMENT PRIMARY KEY,
-    user_id INT NOT NULL,
-    movie_id BIGINT NOT NULL,
-    rating DECIMAL(2,1) NOT NULL,
-    rated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-
-    UNIQUE KEY unique_rating (user_id, movie_id),
-
-    FOREIGN KEY (user_id)
-        REFERENCES users(user_id)
-        ON DELETE CASCADE,
-
-    FOREIGN KEY (movie_id)
-        REFERENCES movies(movie_id)
-        ON DELETE CASCADE
-);
-
-CREATE TABLE reviews (
-    review_id BIGINT AUTO_INCREMENT PRIMARY KEY,
-    user_id INT NOT NULL,
-    movie_id BIGINT NOT NULL,
-    review_text TEXT,
-    likes INT DEFAULT 0,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-
-    FOREIGN KEY (user_id)
-        REFERENCES users(user_id)
-        ON DELETE CASCADE,
-
-    FOREIGN KEY (movie_id)
-        REFERENCES movies(movie_id)
-        ON DELETE CASCADE
-);
-
-CREATE TABLE watchlist (
-    user_id INT,
-    movie_id BIGINT,
-    added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-
-    PRIMARY KEY (user_id, movie_id),
-
-    FOREIGN KEY (user_id)
-        REFERENCES users(user_id)
-        ON DELETE CASCADE,
-
-    FOREIGN KEY (movie_id)
-        REFERENCES movies(movie_id)
-        ON DELETE CASCADE
-);
-
-CREATE TABLE favorites (
-    user_id INT,
-    movie_id BIGINT,
-    added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-
-    PRIMARY KEY (user_id, movie_id),
-
-    FOREIGN KEY (user_id)
-        REFERENCES users(user_id)
-        ON DELETE CASCADE,
-
-    FOREIGN KEY (movie_id)
-        REFERENCES movies(movie_id)
-        ON DELETE CASCADE
-);
-
-CREATE TABLE search_history (
-    history_id BIGINT AUTO_INCREMENT PRIMARY KEY,
-    user_id INT,
-    search_query VARCHAR(255),
-    searched_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-
-    FOREIGN KEY (user_id)
-        REFERENCES users(user_id)
-        ON DELETE CASCADE
-);
-
-CREATE INDEX idx_movies_title ON movies(title);
-
-CREATE INDEX idx_movies_year ON movies(release_year);
-
-CREATE INDEX idx_movies_rating ON movies(avg_rating);
-
-CREATE INDEX idx_movie_genres_movie ON movie_genres(movie_id);
-
-CREATE INDEX idx_movie_actors_movie ON movie_actors(movie_id);
-
-CREATE INDEX idx_movie_directors_movie ON movie_directors(movie_id);
-
-CREATE INDEX idx_ratings_movie ON ratings(movie_id);
-
-CREATE INDEX idx_reviews_movie ON reviews(movie_id);
-
-CREATE INDEX idx_watchlist_user ON watchlist(user_id);
-
-
-SHOW TABLES;
 </file>
 
 <file path="backend/utils/__init__.py">
@@ -1516,6 +836,9 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+.env
+.env.*
 </file>
 
 <file path="Frontend_react/.oxlintrc.json">
@@ -1611,6 +934,553 @@ a:hover {
 
 <file path="Frontend_react/src/assets/vite.svg">
 <svg xmlns="http://www.w3.org/2000/svg" width="77" height="47" fill="none" aria-labelledby="vite-logo-title" viewBox="0 0 77 47"><title id="vite-logo-title">Vite</title><style>.parenthesis{fill:#000}@media (prefers-color-scheme:dark){.parenthesis{fill:#fff}}</style><path fill="#9135ff" d="M40.151 45.71c-.663.844-2.02.374-2.02-.699V34.708a2.26 2.26 0 0 0-2.262-2.262H24.493c-.92 0-1.457-1.04-.92-1.788l7.479-10.471c1.07-1.498 0-3.578-1.842-3.578H15.443c-.92 0-1.456-1.04-.92-1.788l9.696-13.576c.213-.297.556-.474.92-.474h28.894c.92 0 1.456 1.04.92 1.788l-7.48 10.472c-1.07 1.497 0 3.578 1.842 3.578h11.376c.944 0 1.474 1.087.89 1.83L40.153 45.712z"/><mask id="a" width="48" height="47" x="14" y="0" maskUnits="userSpaceOnUse" style="mask-type:alpha"><path fill="#000" d="M40.047 45.71c-.663.843-2.02.374-2.02-.699V34.708a2.26 2.26 0 0 0-2.262-2.262H24.389c-.92 0-1.457-1.04-.92-1.788l7.479-10.472c1.07-1.497 0-3.578-1.842-3.578H15.34c-.92 0-1.456-1.04-.92-1.788l9.696-13.575c.213-.297.556-.474.92-.474H53.93c.92 0 1.456 1.04.92 1.788L47.37 13.03c-1.07 1.498 0 3.578 1.842 3.578h11.376c.944 0 1.474 1.088.89 1.831L40.049 45.712z"/></mask><g mask="url(#a)"><g filter="url(#b)"><ellipse cx="5.508" cy="14.704" fill="#eee6ff" rx="5.508" ry="14.704" transform="rotate(269.814 20.96 11.29)scale(-1 1)"/></g><g filter="url(#c)"><ellipse cx="10.399" cy="29.851" fill="#eee6ff" rx="10.399" ry="29.851" transform="rotate(89.814 -16.902 -8.275)scale(1 -1)"/></g><g filter="url(#d)"><ellipse cx="5.508" cy="30.487" fill="#8900ff" rx="5.508" ry="30.487" transform="rotate(89.814 -19.197 -7.127)scale(1 -1)"/></g><g filter="url(#e)"><ellipse cx="5.508" cy="30.599" fill="#8900ff" rx="5.508" ry="30.599" transform="rotate(89.814 -25.928 4.177)scale(1 -1)"/></g><g filter="url(#f)"><ellipse cx="5.508" cy="30.599" fill="#8900ff" rx="5.508" ry="30.599" transform="rotate(89.814 -25.738 5.52)scale(1 -1)"/></g><g filter="url(#g)"><ellipse cx="14.072" cy="22.078" fill="#eee6ff" rx="14.072" ry="22.078" transform="rotate(93.35 31.245 55.578)scale(-1 1)"/></g><g filter="url(#h)"><ellipse cx="3.47" cy="21.501" fill="#8900ff" rx="3.47" ry="21.501" transform="rotate(89.009 35.419 55.202)scale(-1 1)"/></g><g filter="url(#i)"><ellipse cx="3.47" cy="21.501" fill="#8900ff" rx="3.47" ry="21.501" transform="rotate(89.009 35.419 55.202)scale(-1 1)"/></g><g filter="url(#j)"><ellipse cx="14.592" cy="9.743" fill="#8900ff" rx="4.407" ry="29.108" transform="rotate(39.51 14.592 9.743)"/></g><g filter="url(#k)"><ellipse cx="61.728" cy="-5.321" fill="#8900ff" rx="4.407" ry="29.108" transform="rotate(37.892 61.728 -5.32)"/></g><g filter="url(#l)"><ellipse cx="55.618" cy="7.104" fill="#00c2ff" rx="5.971" ry="9.665" transform="rotate(37.892 55.618 7.104)"/></g><g filter="url(#m)"><ellipse cx="12.326" cy="39.103" fill="#8900ff" rx="4.407" ry="29.108" transform="rotate(37.892 12.326 39.103)"/></g><g filter="url(#n)"><ellipse cx="12.326" cy="39.103" fill="#8900ff" rx="4.407" ry="29.108" transform="rotate(37.892 12.326 39.103)"/></g><g filter="url(#o)"><ellipse cx="49.857" cy="30.678" fill="#8900ff" rx="4.407" ry="29.108" transform="rotate(37.892 49.857 30.678)"/></g><g filter="url(#p)"><ellipse cx="52.623" cy="33.171" fill="#00c2ff" rx="5.971" ry="15.297" transform="rotate(37.892 52.623 33.17)"/></g></g><path d="M6.919 0c-9.198 13.166-9.252 33.575 0 46.789h6.215c-9.25-13.214-9.196-33.623 0-46.789zm62.424 0h-6.215c9.198 13.166 9.252 33.575 0 46.789h6.215c9.25-13.214 9.196-33.623 0-46.789" class="parenthesis"/><defs><filter id="b" width="60.045" height="41.654" x="-5.564" y="16.92" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17286" stdDeviation="7.659"/></filter><filter id="c" width="90.34" height="51.437" x="-40.407" y="-6.762" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17286" stdDeviation="7.659"/></filter><filter id="d" width="79.355" height="29.4" x="-35.435" y="2.801" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17286" stdDeviation="4.596"/></filter><filter id="e" width="79.579" height="29.4" x="-30.84" y="20.8" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17286" stdDeviation="4.596"/></filter><filter id="f" width="79.579" height="29.4" x="-29.307" y="21.949" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17286" stdDeviation="4.596"/></filter><filter id="g" width="74.749" height="58.852" x="29.961" y="-17.13" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17286" stdDeviation="7.659"/></filter><filter id="h" width="61.377" height="25.362" x="37.754" y="3.055" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17286" stdDeviation="4.596"/></filter><filter id="i" width="61.377" height="25.362" x="37.754" y="3.055" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17286" stdDeviation="4.596"/></filter><filter id="j" width="56.045" height="63.649" x="-13.43" y="-22.082" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17286" stdDeviation="4.596"/></filter><filter id="k" width="54.814" height="64.646" x="34.321" y="-37.644" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17286" stdDeviation="4.596"/></filter><filter id="l" width="33.541" height="35.313" x="38.847" y="-10.552" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17286" stdDeviation="4.596"/></filter><filter id="m" width="54.814" height="64.646" x="-15.081" y="6.78" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17286" stdDeviation="4.596"/></filter><filter id="n" width="54.814" height="64.646" x="-15.081" y="6.78" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17286" stdDeviation="4.596"/></filter><filter id="o" width="54.814" height="64.646" x="22.45" y="-1.645" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17286" stdDeviation="4.596"/></filter><filter id="p" width="39.409" height="43.623" x="32.919" y="11.36" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse"><feFlood flood-opacity="0" result="BackgroundImageFix"/><feBlend in="SourceGraphic" in2="BackgroundImageFix" result="shape"/><feGaussianBlur result="effect1_foregroundBlur_2002_17286" stdDeviation="4.596"/></filter></defs></svg>
+</file>
+
+<file path="Frontend_react/src/components/Chat.jsx">
+// File Path: Frontend_react/src/components/Chat.jsx
+import React, { useState, useEffect, useRef } from "react";
+import { useNavigate } from "react-router-dom";
+import { io } from "socket.io-client";
+import Navbar from "./Navbar";
+import SearchModal from "./SearchModal";
+import "../styles/Chat.css";
+
+const SOCKET_URL = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:5000";
+
+const getMyUserIdFromToken = () => {
+  const token = localStorage.getItem("token");
+  if (!token) return null;
+  try {
+    const base64Url = token.split(".")[1];
+    const base64 = base64Url.replace(/-/g, "+").replace(/_/g, "/");
+    const payload = JSON.parse(atob(base64));
+    return Number(payload.user_id || payload.id);
+  } catch (e) {
+    return null;
+  }
+};
+
+const getAvatarGradient = (name = "U") => {
+  const palettes = [
+    "linear-gradient(135deg, #2e1f47 0%, #151024 100%)",
+    "linear-gradient(135deg, #1b2838 0%, #0f1722 100%)",
+    "linear-gradient(135deg, #1f352e 0%, #0f1c18 100%)",
+    "linear-gradient(135deg, #3b1d2e 0%, #1a0d15 100%)",
+    "linear-gradient(135deg, #2b2640 0%, #141220 100%)",
+  ];
+  const safeName = name && name.length > 0 ? name : "U";
+  const index = safeName.charCodeAt(0) % palettes.length;
+  return palettes[index];
+};
+
+const formatTime = (dateString) => {
+  if (!dateString) return "";
+  const date = new Date(dateString);
+  return date.toLocaleTimeString("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  });
+};
+
+const Chat = () => {
+  const navigate = useNavigate();
+  const token = localStorage.getItem("token");
+  const myUserId = getMyUserIdFromToken();
+
+  const [onlineUserIds, setOnlineUserIds] = useState([]);
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
+
+  const [messages, setMessages] = useState([]);
+  const [newMessage, setNewMessage] = useState("");
+  const [friendsList, setFriendsList] = useState([]);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [activeFriend, setActiveFriend] = useState(null);
+
+  const [unreadCounts, setUnreadCounts] = useState({});
+  const [lastPreviews, setLastPreviews] = useState({});
+  
+  // 🚀 NAYA: Typing & Scroll States
+  const [isFriendTyping, setIsFriendTyping] = useState(false);
+  const [showScrollBtn, setShowScrollBtn] = useState(false);
+  let typingTimeout = useRef(null);
+
+  const socketRef = useRef(null);
+  const activeFriendRef = useRef(null);
+  const messagesEndRef = useRef(null);
+  const chatContainerRef = useRef(null);
+
+  useEffect(() => {
+    activeFriendRef.current = activeFriend;
+    if (activeFriend) {
+      setUnreadCounts((prev) => ({ ...prev, [activeFriend.id]: 0 }));
+      setIsFriendTyping(false); // Reset typing state on friend switch
+    }
+  }, [activeFriend]);
+
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  };
+
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages, isFriendTyping]);
+
+  const handleScroll = (e) => {
+    const { scrollTop, scrollHeight, clientHeight } = e.target;
+    // Show button if we scroll up more than 150px from bottom
+    if (scrollHeight - scrollTop - clientHeight > 150) {
+      setShowScrollBtn(true);
+    } else {
+      setShowScrollBtn(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!token || !myUserId) {
+      navigate("/login");
+      return;
+    }
+
+    fetch(`${SOCKET_URL}/get_friends`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.friends && data.friends.length > 0) {
+          setFriendsList(data.friends);
+          setActiveFriend(data.friends[0]);
+        }
+      })
+      .catch((err) => console.error("Error fetching friends:", err));
+  }, [token, myUserId, navigate]);
+
+  const parseMovieShare = (msgString) => {
+    try {
+      const data = JSON.parse(msgString);
+      if (data && data.isMovieShare) return data;
+    } catch (e) {
+      return null;
+    }
+    return null;
+  };
+
+  const getPreviewText = (msgText) => {
+    const shared = parseMovieShare(msgText);
+    if (shared) return `🎬 Shared ${shared.movieTitle}`;
+    return msgText.length > 28 ? msgText.substring(0, 28) + "..." : msgText;
+  };
+
+  useEffect(() => {
+    if (!token || !myUserId) return;
+
+    const newSocket = io(SOCKET_URL);
+    socketRef.current = newSocket;
+
+    newSocket.on("online_users_list", (userIds) => {
+      setOnlineUserIds(userIds.map(Number));
+    });
+
+    newSocket.on("connect", () => {
+      newSocket.emit("join_chat", { token });
+    });
+
+    newSocket.on("receive_message", (data) => {
+      const senderId = Number(data.sender_id);
+      const currentFriend = activeFriendRef.current;
+
+      setLastPreviews((prev) => ({
+        ...prev,
+        [senderId]: getPreviewText(data.message),
+      }));
+
+      if (currentFriend && senderId === Number(currentFriend.id)) {
+        setMessages((prev) => [...prev, data]);
+      } else {
+        setUnreadCounts((prev) => ({
+          ...prev,
+          [senderId]: (prev[senderId] || 0) + 1,
+        }));
+      }
+    });
+
+    newSocket.on("messages_read_by_friend", (data) => {
+      const currentFriend = activeFriendRef.current;
+      if (currentFriend && Number(data.reader_id) === Number(currentFriend.id)) {
+        setMessages((prev) =>
+          prev.map((m) =>
+            Number(m.sender_id) === myUserId ? { ...m, is_read: true } : m
+          )
+        );
+      }
+    });
+
+    // 🚀 NAYA: Typing Listeners
+    newSocket.on("friend_typing", (data) => {
+      if (activeFriendRef.current && Number(data.sender_id) === Number(activeFriendRef.current.id)) {
+        setIsFriendTyping(true);
+      }
+    });
+
+    newSocket.on("friend_stop_typing", (data) => {
+      if (activeFriendRef.current && Number(data.sender_id) === Number(activeFriendRef.current.id)) {
+        setIsFriendTyping(false);
+      }
+    });
+
+    return () => newSocket.disconnect();
+  }, [token, myUserId]);
+
+  useEffect(() => {
+    if (!activeFriend || !token) return;
+
+    let isCancelled = false;
+    setMessages([]);
+
+    fetch(`${SOCKET_URL}/chat_history/${activeFriend.id}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then((res) => res.json())
+      .then((data) => {
+        if (!isCancelled) {
+          const hist = data.history || [];
+          setMessages(hist);
+          if (hist.length > 0) {
+            const lastMsg = hist[hist.length - 1];
+            setLastPreviews((prev) => ({
+              ...prev,
+              [activeFriend.id]: getPreviewText(lastMsg.message),
+            }));
+          }
+        }
+      })
+      .catch((err) => console.error("Error fetching history:", err));
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [activeFriend, token]);
+
+  useEffect(() => {
+    if (!activeFriend || !socketRef.current) return;
+    const hasUnreadFromFriend = messages.some(
+      (m) => Number(m.sender_id) === Number(activeFriend.id) && !m.is_read
+    );
+    if (hasUnreadFromFriend && !document.hidden) {
+      socketRef.current.emit("mark_messages_read", {
+        token: token,
+        friend_id: activeFriend.id,
+      });
+    }
+  }, [activeFriend, messages, token]);
+
+  const handleInputChange = (e) => {
+    setNewMessage(e.target.value);
+    if (socketRef.current && activeFriend) {
+      socketRef.current.emit("typing", { token, receiver_id: activeFriend.id });
+      clearTimeout(typingTimeout.current);
+      typingTimeout.current = setTimeout(() => {
+        socketRef.current.emit("stop_typing", { token, receiver_id: activeFriend.id });
+      }, 1500);
+    }
+  };
+
+  const handleSendMessage = (e) => {
+    e.preventDefault();
+    if (!newMessage.trim() || !socketRef.current || !activeFriend) return;
+
+    const cleanText = newMessage.trim();
+    const msgData = {
+      token: token,
+      sender_id: myUserId,
+      receiver_id: activeFriend.id,
+      message: cleanText,
+      is_read: false,
+    };
+
+    socketRef.current.emit("send_message", msgData);
+    socketRef.current.emit("stop_typing", { token, receiver_id: activeFriend.id }); // clear typing
+
+    setMessages((prev) => [
+      ...prev,
+      { ...msgData, sent_at: new Date().toISOString() },
+    ]);
+    setLastPreviews((prev) => ({
+      ...prev,
+      [activeFriend.id]: `You: ${getPreviewText(cleanText)}`,
+    }));
+    setNewMessage("");
+  };
+
+  const renderAvatar = (friendObj, className = "nexus-avatar") => {
+    if (!friendObj) return null;
+    const initial = friendObj.username ? friendObj.username[0].toUpperCase() : "U";
+    // 🚀 Update: DB se profile_image aaye toh usko use karo
+    const imageUrl = friendObj.profile_image || friendObj.avatar; 
+    const hasImage = Boolean(imageUrl);
+
+    return (
+      <div
+        className={className}
+        style={{
+          background: hasImage ? "transparent" : getAvatarGradient(friendObj.username),
+        }}
+      >
+        {hasImage ? (
+          <img src={imageUrl} alt={friendObj.username} className="avatar-img" />
+        ) : (
+          <span className="avatar-initial">{initial}</span>
+        )}
+      </div>
+    );
+  };
+
+  const filteredFriends = friendsList.filter((f) =>
+    f.username.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
+  return (
+    <div style={{ backgroundColor: "var(--bg-main)", minHeight: "100vh" }}>
+      <Navbar onOpenSearch={() => setIsSearchOpen(true)} />
+      <SearchModal isOpen={isSearchOpen} onClose={() => setIsSearchOpen(false)} />
+
+      <div className="nexus-chat-layout" style={{ marginTop: "70px", position: "relative" }}>
+        <div className="nexus-sidebar">
+          <div className="sidebar-top-title">
+            <h2>Messages</h2>
+            <span className="friend-count-badge">{friendsList.length}</span>
+          </div>
+
+          <div className="sidebar-search-box">
+            <svg className="search-svg" viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" strokeWidth="2" fill="none">
+              <circle cx="11" cy="11" r="8"></circle>
+              <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+            </svg>
+            <input
+              type="text"
+              placeholder="Search connections..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+            />
+          </div>
+
+          <div className="friends-list">
+            {filteredFriends.length === 0 ? (
+              <div className="empty-friends" style={{ padding: "20px", color: "#6b7280", textAlign: "center", fontSize: "13.5px" }}>
+                No connections found
+              </div>
+            ) : (
+              filteredFriends.map((friend) => {
+                const isSelected = activeFriend?.id === friend.id;
+                const isFriendOnline = onlineUserIds.includes(Number(friend.id));
+                const unread = unreadCounts[friend.id] || 0;
+                const preview = lastPreviews[friend.id] || "Tap to view conversation";
+
+                return (
+                  <div
+                    key={friend.id}
+                    className={`friend-tile ${isSelected ? "active" : ""}`}
+                    onClick={() => setActiveFriend(friend)}
+                  >
+                    {renderAvatar(friend, "nexus-avatar")}
+                    <div className="friend-meta" style={{ flex: 1 }}>
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: "7px" }}>
+                          <h4 style={{ margin: 0 }}>{friend.username}</h4>
+                          {isFriendOnline && (
+                            <span className="online-dot-only" title="Online"></span>
+                          )}
+                        </div>
+                        {unread > 0 && (
+                          <span style={{
+                            background: "var(--primary-accent)",
+                            color: "#fff",
+                            fontSize: "11px",
+                            fontWeight: "700",
+                            padding: "2px 7px",
+                            borderRadius: "10px"
+                          }}>
+                            {unread}
+                          </span>
+                        )}
+                      </div>
+                      <p style={{ marginTop: "4px", color: unread > 0 ? "#fff" : undefined, fontWeight: unread > 0 ? "600" : undefined }}>
+                        {preview}
+                      </p>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </div>
+
+        {activeFriend ? (
+          <div className="nexus-chat-area">
+            <div className="chat-header">
+              <div className="header-user-info">
+                {renderAvatar(activeFriend, "nexus-avatar header-avatar")}
+                <div>
+                  <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                    <h3 style={{ margin: 0 }}>{activeFriend.username}</h3>
+                  </div>
+                  {onlineUserIds.includes(Number(activeFriend.id)) ? (
+                    <span className="online-indicator">
+                      <span className="dot"></span> Online
+                    </span>
+                  ) : (
+                    <span style={{ fontSize: "12px", color: "#6b7280" }}>Offline</span>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <div className="chat-messages-container" onScroll={handleScroll} ref={chatContainerRef}>
+              {messages.length === 0 ? (
+                <div className="empty-chat-placeholder">
+                  {renderAvatar(activeFriend, "nexus-avatar large-placeholder-avatar")}
+                  <h4>{activeFriend.username}</h4>
+                  <p>Share a movie or say hello to start the conversation.</p>
+                </div>
+              ) : (
+                messages.map((msg, idx) => {
+                  const isMe = Number(msg.sender_id) === myUserId;
+                  
+                  // 🚀 NAYA: Message Grouping Logic (Hide avatar and adjust margin if same sender)
+                  const prevMsg = messages[idx - 1];
+                  const isSameSenderAsPrev = prevMsg && Number(prevMsg.sender_id) === Number(msg.sender_id);
+                  const nextMsg = messages[idx + 1];
+                  const isSameSenderAsNext = nextMsg && Number(nextMsg.sender_id) === Number(msg.sender_id);
+
+                  const lastMyMsgIndex = messages.map((m) => Number(m.sender_id)).lastIndexOf(myUserId);
+                  const isLastMyMsg = isMe && idx === lastMyMsgIndex;
+                  const movieData = parseMovieShare(msg.message);
+
+                  return (
+                    <div
+                      key={msg.msg_id || idx}
+                      className={`msg-row ${isMe ? "msg-row-me" : "msg-row-friend"}`}
+                      style={{ marginTop: isSameSenderAsPrev ? "2px" : "14px" }}
+                    >
+                      <div className={`message-wrapper ${isMe ? "me" : "friend"}`}>
+                        
+                        {!isMe && (
+                          <div style={{ width: "30px", flexShrink: 0 }}>
+                            {!isSameSenderAsNext && renderAvatar(activeFriend, "nexus-avatar small-avatar")}
+                          </div>
+                        )}
+
+                        {movieData ? (
+                          <div className={`movie-share-card ${isMe ? "my-card" : "friend-card"}`}>
+                            <div className="movie-card-poster-wrap" onClick={() => navigate(`/movie/${movieData.movieId}`)}>
+                              <img src={movieData.posterUrl} alt={movieData.movieTitle} className="movie-card-poster-img" />
+                              <div className="movie-card-gradient"></div>
+                              <span className="movie-card-badge">🎬 MUST WATCH</span>
+                              <h4 className="movie-card-title">{movieData.movieTitle}</h4>
+                            </div>
+                            <div className="movie-card-body">
+                              {movieData.userMessage && (
+                                <p className="movie-card-caption">"{movieData.userMessage}"</p>
+                              )}
+                              <button className="movie-card-btn" onClick={() => navigate(`/movie/${movieData.movieId}`)}>
+                                <span>Explore Movie</span>
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div 
+                            className={`message-bubble ${isMe ? "my-bubble" : "friend-bubble"}`}
+                            style={{ 
+                              borderTopLeftRadius: !isMe && isSameSenderAsPrev ? "4px" : undefined,
+                              borderBottomLeftRadius: !isMe && isSameSenderAsNext ? "4px" : undefined,
+                              borderTopRightRadius: isMe && isSameSenderAsPrev ? "4px" : undefined,
+                              borderBottomRightRadius: isMe && isSameSenderAsNext ? "4px" : undefined,
+                            }}
+                          >
+                            {msg.message}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Show Time/Seen only on the last message of the group */}
+                      {!isSameSenderAsNext && (
+                        <div className="msg-bottom-meta">
+                          <span className="msg-time">{formatTime(msg.sent_at)}</span>
+                          {isLastMyMsg && (msg.is_read || msg.is_read === 1) && (
+                            <span className="seen-status">
+                              <svg viewBox="0 0 24 24" width="13" height="13" stroke="var(--secondary-accent)" strokeWidth="2.5" fill="none">
+                                <polyline points="20 6 9 17 4 12"></polyline>
+                              </svg> Seen
+                            </span>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })
+              )}
+              
+              {/* 🚀 NAYA: Typing Indicator UI */}
+              {isFriendTyping && (
+                 <div className="msg-row msg-row-friend" style={{ marginTop: "14px" }}>
+                   <div className="message-wrapper friend">
+                     <div style={{ width: "30px", flexShrink: 0 }}>
+                        {renderAvatar(activeFriend, "nexus-avatar small-avatar")}
+                     </div>
+                     <div className="message-bubble friend-bubble" style={{ fontStyle: "italic", color: "#aaa", padding: "8px 16px" }}>
+                       typing...
+                     </div>
+                   </div>
+                 </div>
+              )}
+
+              <div ref={messagesEndRef} />
+            </div>
+
+            {/* 🚀 NAYA: Scroll to bottom button */}
+            {showScrollBtn && (
+              <button 
+                onClick={scrollToBottom}
+                style={{
+                  position: "absolute", bottom: "90px", right: "40px",
+                  background: "var(--bg-secondary)", border: "1px solid var(--border-light)",
+                  color: "#fff", width: "40px", height: "40px", borderRadius: "50%",
+                  cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
+                  boxShadow: "0 4px 15px rgba(0,0,0,0.5)", zIndex: 10
+                }}
+              >
+                ⬇️
+              </button>
+            )}
+
+            <form className="chat-input-wrapper" onSubmit={handleSendMessage}>
+              <div className="chat-input-pill">
+                <input
+                  type="text"
+                  placeholder={`Message ${activeFriend.username}...`}
+                  value={newMessage}
+                  onChange={handleInputChange}
+                />
+                <button type="submit" className="send-icon-btn" disabled={!newMessage.trim()}>
+                  <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" strokeWidth="2.2" fill="none" strokeLinecap="round" strokeLinejoin="round">
+                    <line x1="22" y1="2" x2="11" y2="13"></line>
+                    <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+                  </svg>
+                </button>
+              </div>
+            </form>
+          </div>
+        ) : (
+          <div className="nexus-chat-area empty-selection" style={{ justifyContent: "center", alignItems: "center" }}>
+            <h3>Select a conversation to start chatting</h3>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+export default Chat;
 </file>
 
 <file path="Frontend_react/src/components/CinematicLoader.jsx">
@@ -1727,7 +1597,7 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 
 import App from "./App";
-
+import "./styles/global.css";
 import "./styles/login.css";
 
 
@@ -1740,383 +1610,615 @@ ReactDOM.createRoot(
 );
 </file>
 
-<file path="Frontend_react/src/pages/ExploreMovies.jsx">
-import React, { useState, useEffect, useRef, useCallback } from "react";
-import { Link, useLocation,useNavigate } from "react-router-dom";
-import Navbar from "../components/Navbar";
-import { getSurpriseMovie } from "../services/homeService";
-import "../styles/explore.css";
-import CinematicLoader from "../components/CinematicLoader";
+<file path="Frontend_react/src/styles/Chat.css">
+/* File Path: Frontend_react/src/styles/Chat.css */
 
-export default function ExploreMovies() {
-  const location = useLocation();
-  const initialGenre = location.state?.genre || "All";
+.nexus-chat-layout {
+  display: flex;
+  height: calc(100vh - 70px);
+  background: #08080c;
+  color: #f3f4f6;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  overflow: hidden;
+}
 
-  const [movies, setMovies] = useState([]);
-  const [page, setPage] = useState(1);
-  const [hasMore, setHasMore] = useState(true);
-  const [loading, setLoading] = useState(false);
+/* ==================== LEFT SIDEBAR ==================== */
+.nexus-sidebar {
+  width: 320px;
+  background: #0d0d14;
+  border-right: 1px solid rgba(255, 255, 255, 0.06);
+  display: flex;
+  flex-direction: column;
+}
 
-  // --- Advanced Filters State ---
-  const [sortBy, setSortBy] = useState("Newest");
-  const [selectedGenre, setSelectedGenre] = useState(initialGenre);
-  const [selectedLang, setSelectedLang] = useState("All");
-  const [selectedDuration, setSelectedDuration] = useState("All");
-  const [selectedDecade, setSelectedDecade] = useState("All");
+.sidebar-top-title {
+  padding: 22px 20px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
 
-  const observer = useRef();
-  const lastMovieElementRef = useCallback(
-    (node) => {
-      if (loading) return <CinematicLoader />;
-      if (observer.current) observer.current.disconnect();
-      observer.current = new IntersectionObserver((entries) => {
-        if (entries[0].isIntersecting && hasMore) {
-          setPage((prevPage) => prevPage + 1);
-        }
-      });
-      if (node) observer.current.observe(node);
-    },
-    [loading, hasMore]
-  );
+.sidebar-top-title h2 {
+  font-size: 20px;
+  font-weight: 700;
+  margin: 0;
+  letter-spacing: -0.3px;
+  color: #ffffff;
+}
 
-  // Naya fetch jisme saare parameters hain
-  const fetchMovies = async (pageNum) => {
-    setLoading(true);
-    try {
-      const url = `http://127.0.0.1:5000/explore/movies?page=${pageNum}&limit=20&genre=${selectedGenre}&sort_by=${sortBy}&lang=${selectedLang}&duration=${selectedDuration}&decade=${selectedDecade}`;
-      
-      const res = await fetch(url);
-      const data = await res.json();
-      
-      // 🛡️ SECURITY CHECK: Agar API ne error bheja toh crash mat ho!
-      if (!res.ok || !data.movies) {
-        console.error("API Error:", data.error || "Movies not found");
-        return; // Yahan se wapas laut jao, app crash nahi hoga
-      }
+.friend-count-badge {
+  background: rgba(155, 92, 255, 0.15);
+  color: #c4b5fd;
+  border: 1px solid rgba(155, 92, 255, 0.3);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 2px 10px;
+  border-radius: 20px;
+}
 
-      setMovies((prev) => (pageNum === 1 ? data.movies : [...prev, ...data.movies]));
-      setHasMore(data.has_more);
-    } catch (error) {
-      console.error("Explore fetch error:", error);
-    } finally {
-      setLoading(false);
-    }
-  };
+.sidebar-search-box {
+  margin: 0 16px 16px;
+  position: relative;
+  display: flex;
+  align-items: center;
+}
 
-  // Jab bhi KOI BHI filter change ho, tabhi page 1 se reload karo
-  useEffect(() => {
-    setPage(1);
-    fetchMovies(1);
-    // eslint-disable-next-line
-  }, [selectedGenre, sortBy, selectedLang, selectedDuration, selectedDecade]);
+.sidebar-search-box .search-svg {
+  position: absolute;
+  left: 14px;
+  color: #6b7280;
+  pointer-events: none;
+}
 
+.sidebar-search-box input {
+  width: 100%;
+  background: #14141f;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  padding: 11px 14px 11px 38px;
+  border-radius: 12px;
+  color: #fff;
+  font-size: 13.5px;
+  outline: none;
+  transition: all 0.25s ease;
+}
 
-  useEffect(() => {
-    if (page > 1) fetchMovies(page);
-    // eslint-disable-next-line
-  }, [page]);
+.sidebar-search-box input:focus {
+  border-color: rgba(155, 92, 255, 0.5);
+  background: #181826;
+  box-shadow: 0 0 0 3px rgba(155, 92, 255, 0.1);
+}
 
-  const clearFilters = () => {
-    setSortBy("Newest");
-    setSelectedGenre("All");
-    setSelectedLang("All");
-    setSelectedDuration("All");
-    setSelectedDecade("All");
-  };
+.friends-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0 10px;
+}
 
-  const navigate = useNavigate();
-  const [isSurprising, setIsSurprising] = useState(false);
-  const [surpriseMovie, setSurpriseMovie] = useState(null);
+.friend-tile {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 14px;
+  margin-bottom: 6px;
+  border-radius: 14px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border: 1px solid transparent;
+}
 
-  const handleSurpriseMe = async () => {
-    setIsSurprising(true);
-    
-    
-    const data = await getSurpriseMovie();
-    
-    if (data && data.movie_id) {
-      // 🔥 MAGIC YAHAN HAI: Right side ki saari movies hata kar sirf ye ek movie dikha do
-      setMovies([data]); 
-      setHasMore(false); // Infinite scroll band kar do taaki aur movies load na hon
-    } else {
-      alert("Oops! Couldn't find a surprise movie right now.");
-    }
-    
-    setIsSurprising(false);
-  };
+.friend-tile:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
 
-  // Filter Options arrays
-  const genresList = ["All", "Action", "Comedy", "Drama", "Horror", "Sci-Fi", "Romance", "Thriller", "Mystery"];
-  const durationList = ["All", "Under 90m", "90-120m", "120m+"];
-  
-  return (
-    <div className="explore-wrapper">
-      <Navbar />
+.friend-tile.active {
+  background: linear-gradient(90deg, rgba(155, 92, 255, 0.14) 0%, rgba(155, 92, 255, 0.03) 100%);
+  border: 1px solid rgba(155, 92, 255, 0.25);
+}
 
-      <div className="explore-layout">
-        {/* --- LEFT SIDEBAR (PREMIUM FILTERS) --- */}
-        <aside className="explore-sidebar">
-          <div className="filter-header">
-            <h3>Filters <span>{movies.length > 0 ? "Active" : ""}</span></h3>
-            <button onClick={clearFilters} className="clear-btn">✕ Clear</button>
-          </div>
+.friend-meta h4 {
+  margin: 0 0 4px 0;
+  font-size: 14.5px;
+  font-weight: 600;
+  color: #f3f4f6;
+}
 
-          <div className="filter-scroll-area">
-            {/* SORTING */}
-            <div className="filter-section">
-              <label>SORT BY</label>
-              <div className="custom-select-wrapper">
-                <select value={sortBy} onChange={(e) => setSortBy(e.target.value)} className="filter-select">
-                  <option value="Newest">Newest Releases</option>
-                  <option value="Top Rated">Top Rated</option>
-                  <option value="A-Z">Alphabetical (A-Z)</option>
-                </select>
-              </div>
-            </div>
+.friend-meta p {
+  margin: 0;
+  font-size: 12px;
+  color: #6b7280;
+}
 
-            {/* GENRES (Grid Style Badges) */}
-            <div className="filter-section">
-              <label>GENRE</label>
-              <div className="genre-badges-grid">
-                {genresList.map((g) => (
-                  <button
-                    key={g}
-                    className={`filter-badge ${selectedGenre === g ? "active" : ""}`}
-                    onClick={() => setSelectedGenre(g)}
-                  >
-                    {selectedGenre === g && <span className="active-dot"></span>}
-                    {g}
-                  </button>
-                ))}
-              </div>
-            </div>
+.friend-tile.active .friend-meta p {
+  color: var(--secondary-accent);
+}
 
-            {/* LANGUAGES (Select) */}
-            <div className="filter-section">
-              <label>LANGUAGE</label>
-              <div className="custom-select-wrapper">
-                <select value={selectedLang} onChange={(e) => setSelectedLang(e.target.value)} className="filter-select">
-                  <option value="All">All Languages</option>
-                  <option value="English">English</option>
-                  <option value="Hindi">Hindi</option>
-                  <option value="Japanese">Japanese</option>
-                  <option value="Korean">Korean</option>
-                </select>
-              </div>
-            </div>
+/* ==================== LUXURY AVATAR (NO PINK) ==================== */
+.nexus-avatar {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  border: 1.5px solid rgba(167, 139, 250, 0.3);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  overflow: hidden;
+  position: relative;
+}
 
-            {/* DECADE (Select) */}
-            <div className="filter-section">
-              <label>DECADE</label>
-              <div className="custom-select-wrapper">
-                <select value={selectedDecade} onChange={(e) => setSelectedDecade(e.target.value)} className="filter-select">
-                  <option value="All">All Time</option>
-                  <option value="2020s">2020s</option>
-                  <option value="2010s">2010s</option>
-                  <option value="2000s">2000s</option>
-                  <option value="Classic">Classics (Pre-2000)</option>
-                </select>
-              </div>
-            </div>
+.avatar-initial {
+  font-size: 16px;
+  font-weight: 700;
+  color: #e9d5ff;
+  letter-spacing: 0.5px;
+}
 
-            {/* DURATION (Pills) */}
-            <div className="filter-section">
-              <label>DURATION</label>
-              <div className="duration-pills">
-                {durationList.map(dur => (
-                  <button 
-                    key={dur} 
-                    className={`dur-pill ${selectedDuration === dur ? "active" : ""}`}
-                    onClick={() => setSelectedDuration(dur)}
-                  >
-                    {dur}
-                  </button>
-                ))}
-              </div>
-            </div>
-            {/* 🔥 NAYA BADA SURPRISE ME BOX YAHAN AAYEGA 🔥 */}
-            {/* 🔥 SIMPLE & SLEEK SURPRISE ME BUTTON 🔥 */}
-            <div className="surprise-me-box-container">
-              <button 
-                className="btn-surprise-me-simple" 
-                onClick={handleSurpriseMe} 
-                disabled={isSurprising}
-              >
-                {isSurprising ? "Searching..." : "Surprise Me"}
-              </button>
+.avatar-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
 
-              
-            </div>
-          </div>
-        </aside>
+.small-avatar {
+  width: 30px;
+  height: 30px;
+  border-width: 1px;
+}
 
-        {/* --- RIGHT MAIN GRID --- */}
-        <main className="explore-main">
-          
+.small-avatar .avatar-initial {
+  font-size: 12px;
+}
 
-          {/* Active Tags Bar */}
-          <div className="active-tags-bar">
-            {selectedGenre !== "All" && <span className="glow-tag">{selectedGenre}</span>}
-            {selectedLang !== "All" && <span className="glow-tag">{selectedLang}</span>}
-            {selectedDuration !== "All" && <span className="glow-tag">{selectedDuration}</span>}
-            {selectedDecade !== "All" && <span className="glow-tag">{selectedDecade}</span>}
-            <span className="plain-tag">Sort: {sortBy}</span>
-          </div>
+.large-placeholder-avatar {
+  width: 68px;
+  height: 68px;
+  margin-bottom: 12px;
+}
 
-          <div className="premium-movie-grid">
-            {movies.map((movie, index) => {
-              const isLast = movies.length === index + 1;
-              return (
-                <Link 
-                  to={`/movie/${movie.movie_id}`} 
-                  key={movie.movie_id} 
-                  ref={isLast ? lastMovieElementRef : null} 
-                  className="premium-movie-card"
-                >
-                  <div className="card-img-wrapper">
-                    <img src={movie.poster_url} alt={movie.title} loading="lazy" />
-                    <div className="card-overlay">
-                      <span className="play-btn">▶</span>
-                    </div>
-                    {movie.avg_rating && (
-                      <div className="rating-badge">★ {Number(movie.avg_rating).toFixed(1)}</div>
-                    )}
-                  </div>
-                  <div className="card-info">
-                    <h4>{movie.title}</h4>
-                    <p>{movie.release_year} • Movie</p>
-                  </div>
-                </Link>
-              );
-            })}
-          </div>
+.large-placeholder-avatar .avatar-initial {
+  font-size: 24px;
+}
 
-          {loading && (
-            <div className="ex-loader">
-              <div className="spinner"></div>
-              <span>Discovering movies...</span>
-            </div>
-          )}
-          {!hasMore && movies.length > 0 && (
-            <div className="end-msg">🎉 You've explored all movies in this category!</div>
-          )}
-          {!loading && movies.length === 0 && (
-            <div className="empty-state">No movies found for these filters.</div>
-          )}
-        </main>
-      </div>
-    </div>
+/* ==================== RIGHT CHAT AREA ==================== */
+.nexus-chat-area {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  background: radial-gradient(circle at top right, rgba(124, 58, 237, 0.06), transparent 45%), #08080c;
+}
+
+.chat-header {
+  padding: 16px 28px;
+  background: rgba(13, 13, 20, 0.75);
+  backdrop-filter: blur(16px);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  z-index: 10;
+}
+
+.header-user-info {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.header-user-info h3 {
+  margin: 0 0 3px 0;
+  font-size: 16px;
+  font-weight: 700;
+  color: #fff;
+}
+
+.online-indicator {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #9ca3af;
+}
+
+.online-indicator .dot {
+  width: 7px;
+  height: 7px;
+  background: #10b981;
+  border-radius: 50%;
+  box-shadow: 0 0 8px #10b981;
+}
+
+/* ==================== MESSAGES LIST ==================== */
+.chat-messages-container {
+  flex: 1;
+  padding: 24px 28px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.empty-chat-placeholder {
+  margin: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  color: #6b7280;
+}
+
+.empty-chat-placeholder h4 {
+  margin: 4px 0;
+  color: #e5e7eb;
+  font-size: 17px;
+}
+
+.empty-chat-placeholder p {
+  font-size: 13.5px;
+  max-width: 260px;
+}
+
+.msg-row {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+}
+
+.msg-row-me {
+  align-items: flex-end;
+}
+
+.msg-row-friend {
+  align-items: flex-start;
+}
+
+.message-wrapper {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  max-width: 70%;
+}
+
+.message-bubble {
+  padding: 12px 18px;
+  font-size: 14.2px;
+  line-height: 1.5;
+  word-wrap: break-word;
+  letter-spacing: 0.1px;
+}
+
+.my-bubble {
+  background: linear-gradient(135deg, #7c3aed 0%, #5b21b6 100%);
+  color: #ffffff;
+  border-radius: 20px 20px 4px 20px;
+  box-shadow: 0 4px 15px rgba(124, 58, 237, 0.25);
+}
+
+.friend-bubble {
+  background: #161622;
+  color: #e5e7eb;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 20px 20px 20px 4px;
+}
+
+/* ==================== AESTHETIC MOVIE SHARE CARD ==================== */
+.movie-share-card {
+  width: 255px;
+  background: #12121c;
+  border-radius: 18px;
+  overflow: hidden;
+  border: 1px solid rgba(167, 139, 250, 0.25);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.55);
+  transition: transform 0.25s ease, border-color 0.25s ease;
+}
+
+.movie-share-card:hover {
+  transform: translateY(-3px);
+  border-color: rgba(167, 139, 250, 0.55);
+}
+
+.movie-card-poster-wrap {
+  position: relative;
+  width: 100%;
+  height: 330px;
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.movie-card-poster-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: transform 0.4s ease;
+}
+
+.movie-share-card:hover .movie-card-poster-img {
+  transform: scale(1.05);
+}
+
+.movie-card-gradient {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    to top,
+    #12121c 4%,
+    rgba(18, 18, 28, 0.55) 40%,
+    transparent 100%
   );
 }
-</file>
 
-<file path="Frontend_react/src/pages/Watchlist.jsx">
-import React, { useState, useEffect } from "react";
-import { Link } from "react-router-dom";
-import { getWatchlist, removeFromWatchlist } from "../services/homeService";
-import Navbar from "../components/Navbar";
-import SearchModal from "../components/SearchModal";
-import "../styles/watchlist.css";
+.movie-card-badge {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  background: rgba(15, 15, 25, 0.75);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: #e9d5ff;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.8px;
+  padding: 5px 10px;
+  border-radius: 20px;
+}
 
-export default function Watchlist() {
-  const [movies, setMovies] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [isSearchOpen, setIsSearchOpen] = useState(false);
-  const [sortOption, setSortOption] = useState("recent");
+.movie-card-title {
+  position: absolute;
+  bottom: 10px;
+  left: 14px;
+  right: 14px;
+  margin: 0;
+  font-size: 17px;
+  font-weight: 800;
+  color: #ffffff;
+  line-height: 1.25;
+  text-shadow: 0 2px 10px rgba(0, 0, 0, 0.8);
+}
 
-  useEffect(() => {
-    window.scrollTo(0, 0);
-    fetchWatchlist();
-  }, []);
+.movie-card-body {
+  padding: 12px 14px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
 
-  const fetchWatchlist = async () => {
-    setLoading(true);
-    const data = await getWatchlist();
-    setMovies(data);
-    setLoading(false);
-  };
+.movie-card-caption {
+  margin: 0;
+  font-size: 13px;
+  color: #cbd5e1;
+  font-style: italic;
+  line-height: 1.45;
+  background: rgba(255, 255, 255, 0.03);
+  padding: 8px 11px;
+  border-radius: 10px;
+  border-left: 2.5px solid #8b5cf6;
+}
 
-  const handleRemove = async (movieId, e) => {
-    e.preventDefault(); 
-    const success = await removeFromWatchlist(movieId);
-    if (success) {
-      // UI se turant hata do bina page refresh kiye
-      setMovies(movies.filter(m => m.movie_id !== movieId));
-    }
-  };
+.movie-card-btn {
+  width: 100%;
+  background: linear-gradient(135deg, #8b5cf6 0%, #6d28d9 100%);
+  color: #ffffff;
+  border: none;
+  padding: 10px 14px;
+  border-radius: 11px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  transition: opacity 0.2s ease, box-shadow 0.2s ease;
+  box-shadow: 0 4px 14px rgba(139, 92, 246, 0.3);
+}
 
-  // UI Sorting Logic
-  const sortedMovies = [...movies].sort((a, b) => {
-    if (sortOption === "recent") return new Date(b.added_at) - new Date(a.added_at);
-    if (sortOption === "rating") return (b.avg_rating || 0) - (a.avg_rating || 0);
-    if (sortOption === "alpha") return a.title.localeCompare(b.title);
-    return 0;
-  });
+.movie-card-btn:hover {
+  opacity: 0.95;
+  box-shadow: 0 6px 20px rgba(139, 92, 246, 0.5);
+}
 
-  return (
-    <div className="watchlist-page">
-      <Navbar onOpenSearch={() => setIsSearchOpen(true)} />
-      <SearchModal isOpen={isSearchOpen} onClose={() => setIsSearchOpen(false)} />
+/* ==================== SEEN STATUS ==================== */
+.seen-status {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11.5px;
+  color: var(--secondary-accent);
+  margin-top: 5px;
+  margin-right: 6px;
+  font-weight: 600;
+}
 
-      <div className="wl-container">
-        <header className="wl-header">
-          <h1>My Watchlist</h1>
-          <p>Your curated collection of must-see movies ({movies.length} items).</p>
-          
-          <div className="wl-filters">
-            <div className="wl-sort-group">
-              <span className="wl-label">Sort by:</span>
-              <select className="wl-select" value={sortOption} onChange={(e) => setSortOption(e.target.value)}>
-                <option value="recent">Recently Added</option>
-                <option value="rating">Highest Rated</option>
-                <option value="alpha">Alphabetical</option>
-              </select>
-            </div>
-          </div>
-        </header>
+/* ==================== FLOATING INPUT BAR ==================== */
+.chat-input-wrapper {
+  padding: 14px 28px 22px;
+  background: transparent;
+}
 
-        {loading ? (
-          <h2 className="loading-text">Loading Collection...</h2>
-        ) : movies.length === 0 ? (
-          <div className="wl-empty">
-            <h2>Your watchlist is empty!</h2>
-            <Link to="/home" className="btn-explore">Explore Movies</Link>
-          </div>
-        ) : (
-          <div className="wl-grid">
-            {sortedMovies.map((movie) => (
-              <Link to={`/movie/${movie.movie_id}`} key={movie.movie_id} className="wl-card">
-                <img src={movie.poster_url} alt={movie.title} className="wl-poster" />
-                
-                {/* 🌟 NAYA: THE PREMIUM HOVER OVERLAY */}
-                <div className="wl-overlay">
-                  <div className="wl-overlay-content">
-                    <h3 className="wl-title">{movie.title}</h3>
-                    <div className="wl-stars">
-                      {"★".repeat(Math.floor(movie.avg_rating || 0))}
-                      <span className="wl-rating-num">{movie.avg_rating}</span>
-                    </div>
-                    <p className="wl-synopsis">
-                      {movie.overview?.length > 70 ? movie.overview.substring(0, 70) + '...' : movie.overview || "No overview available."}
-                    </p>
-                  </div>
-                  
-                  <div className="wl-actions">
-                    <button className="wl-btn-watched" onClick={(e) => { e.preventDefault(); alert('Moved to Watched!'); }}>
-                      Mark as Watched ✔
-                    </button>
-                    <button className="wl-btn-remove" onClick={(e) => handleRemove(movie.movie_id, e)}>
-                      Remove 🔖
-                    </button>
-                  </div>
-                </div>
-              </Link>
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
-  );
+.chat-input-pill {
+  display: flex;
+  align-items: center;
+  background: #13131d;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 30px;
+  padding: 6px 8px 6px 20px;
+  box-shadow: 0 8px 25px rgba(0, 0, 0, 0.35);
+  transition: border-color 0.2s ease;
+}
+
+.chat-input-pill:focus-within {
+  border-color: rgba(155, 92, 255, 0.5);
+}
+
+.chat-input-pill input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  color: #fff;
+  font-size: 14.5px;
+  outline: none;
+}
+
+.chat-input-pill input::placeholder {
+  color: #6b7280;
+}
+
+.send-icon-btn {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #8b5cf6 0%, #6d28d9 100%);
+  color: #fff;
+  border: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.send-icon-btn:disabled {
+  background: #222230;
+  color: #525266;
+  cursor: not-allowed;
+}
+
+.send-icon-btn:not(:disabled):hover {
+  transform: scale(1.06);
+  box-shadow: 0 0 14px rgba(139, 92, 246, 0.6);
+}
+
+/* 🚀 1. Sleek Dark Scrollbar (White sliding bar ko hatane ke liye) */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(155, 92, 255, 0.3);
+}
+
+/* Firefox ke liye */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.1) transparent;
+}
+
+/* 🚀 2. Clean Online Indicator */
+.online-indicator {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #10b981; /* Green color text & dot */
+  font-weight: 500;
+}
+
+.online-indicator .dot {
+  width: 7px;
+  height: 7px;
+  background: #10b981;
+  border-radius: 50%;
+  box-shadow: 0 0 8px #10b981;
+}
+
+.online-dot-only {
+  width: 9px;
+  height: 9px;
+  background-color: #10b981;
+  border-radius: 50%;
+  box-shadow: 0 0 10px #10b981;
+  display: inline-block;
+}
+
+/* ==================== TIMESTAMP & META ==================== */
+.msg-bottom-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 5px;
+}
+
+.msg-time {
+  font-size: 11px;
+  color: #6b7280;
+  font-weight: 500;
+  letter-spacing: 0.3px;
+}
+
+.msg-row-me .msg-bottom-meta {
+  margin-right: 14px;
+  justify-content: flex-end;
+}
+
+.msg-row-friend .msg-bottom-meta {
+  margin-left: 54px; /* Avatar width ke hisaab se bubble ke exact niche aayega */
+  justify-content: flex-start;
+}
+
+.seen-status {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  color: var(--secondary-accent);
+  font-weight: 600;
+  margin: 0; /* Resetting old margin */
+}
+
+/* MOBILE CHAT PANEL TOGGLE FIX */
+.mobile-back-btn {
+  display: none;
+}
+
+@media (max-width: 768px) {
+  .nexus-chat-layout {
+    height: calc(100vh - 65px) !important;
+    flex-direction: row; 
+    width: 100vw;
+  }
+  
+  .nexus-sidebar {
+    width: 100% !important;
+    display: flex !important;
+  }
+  
+  .nexus-chat-area {
+    width: 100% !important;
+    display: none !important;
+  }
+
+  /* When JS adds .has-active-chat, hide list, show chat */
+  .nexus-chat-layout.has-active-chat .nexus-sidebar {
+    display: none !important;
+  }
+  
+  .nexus-chat-layout.has-active-chat .nexus-chat-area {
+    display: flex !important;
+  }
+
+  .mobile-back-btn {
+    display: flex !important;
+    align-items: center;
+    justify-content: center;
+    width: 34px;
+    height: 34px;
+    background: rgba(255,255,255,0.1);
+    border-radius: 50%;
+    margin-right: 10px;
+    border: none;
+    color: #fff;
+    cursor: pointer;
+  }
 }
 </file>
 
@@ -2176,7 +2278,7 @@ export default function Watchlist() {
 
 .filter-header h3 span {
   font-size: 10px;
-  background: #9b5cff;
+  background: var(--primary-accent);
   color: #fff;
   padding: 2px 6px;
   border-radius: 10px;
@@ -2245,7 +2347,7 @@ export default function Watchlist() {
 }
 .filter-select:focus {
   outline: none;
-  border-color: #9b5cff;
+  border-color: var(--primary-accent);
 }
 
 /* Badges (Genre) */
@@ -2276,7 +2378,7 @@ export default function Watchlist() {
 
 .filter-badge.active {
   background: rgba(155, 92, 255, 0.1);
-  border-color: #9b5cff;
+  border-color: var(--primary-accent);
   color: #fff;
   box-shadow: 0 0 15px rgba(155, 92, 255, 0.15);
 }
@@ -2284,9 +2386,9 @@ export default function Watchlist() {
 .active-dot {
   width: 6px;
   height: 6px;
-  background: #9b5cff;
+  background: var(--primary-accent);
   border-radius: 50%;
-  box-shadow: 0 0 8px #9b5cff;
+  box-shadow: 0 0 8px var(--primary-accent);
 }
 
 /* Duration Pills */
@@ -2451,13 +2553,13 @@ export default function Watchlist() {
   flex-direction: column;
   align-items: center;
   padding: 40px;
-  color: #9b5cff;
+  color: var(--primary-accent);
   font-size: 14px;
 }
 .spinner {
   width: 30px; height: 30px;
   border: 3px solid rgba(155, 92, 255, 0.2);
-  border-top-color: #9b5cff;
+  border-top-color: var(--primary-accent);
   border-radius: 50%;
   animation: spin 1s infinite linear;
   margin-bottom: 10px;
@@ -2485,7 +2587,7 @@ export default function Watchlist() {
 .btn-surprise-me-simple {
   width: 100%;
   background-color: rgba(155, 92, 255, 0.1); /* Halka transparent purple */
-  color: #9b5cff; /* Tera theme wala original purple */
+  color: var(--primary-accent); /* Tera theme wala original purple */
   border: 1px solid rgba(155, 92, 255, 0.4);
   padding: 12px 0; /* Height ekdum normal kar di */
   border-radius: 8px; /* Clean edges */
@@ -2497,7 +2599,7 @@ export default function Watchlist() {
 }
 
 .btn-surprise-me-simple:hover {
-  background-color: #9b5cff; /* Hover karne par poora purple ban jayega */
+  background-color: var(--primary-accent); /* Hover karne par poora purple ban jayega */
   color: #fff;
   box-shadow: 0 4px 15px rgba(155, 92, 255, 0.3); /* Halka sa glow */
 }
@@ -2550,7 +2652,7 @@ export default function Watchlist() {
 }
 
 .btn-view-surprise {
-  background: #9b5cff;
+  background: var(--primary-accent);
   color: #fff;
   text-decoration: none;
   padding: 6px 10px;
@@ -2687,7 +2789,7 @@ export default function Watchlist() {
 }
 
 .genre-logo span {
-  color: #9b5cff;
+  color: var(--primary-accent);
 }
 
 
@@ -2979,7 +3081,7 @@ export default function Watchlist() {
     linear-gradient(
       135deg,
       #7438dc,
-      #9b5cff
+      var(--primary-accent)
     );
 
   color: white;
@@ -3074,6 +3176,19 @@ export default function Watchlist() {
 </file>
 
 <file path="Frontend_react/src/styles/global.css">
+/* File Path: Frontend_react/src/styles/global.css */
+:root {
+    --bg-main: #07070a;
+    --bg-secondary: #12121c;
+    --primary-accent: #9b5cff;
+    --primary-accent-hover: #7a3edb;
+    --secondary-accent: #a78bfa;
+    --blue-accent: #47b8ff;
+    --text-main: #ffffff;
+    --text-muted: #888888;
+    --border-light: rgba(255, 255, 255, 0.08);
+}
+
 * {
     margin: 0;
     padding: 0;
@@ -3089,12 +3204,16 @@ body,
 
 body {
     margin: 0;
-    background: #07070a;
-    color: white;
-    font-family: Inter, Arial, sans-serif;
-
+    background: var(--bg-main);
+    color: var(--text-main);
+    font-family: 'Inter', Arial, sans-serif;
     overflow-x: hidden;
     overflow-y: auto;
+}
+
+*:focus-visible {
+    outline: 2px solid var(--primary-accent);
+    outline-offset: 2px;
 }
 </file>
 
@@ -3113,7 +3232,7 @@ body {
   width: 55px;
   height: 55px;
   border: 4px solid rgba(155, 92, 255, 0.2);
-  border-top-color: #9b5cff;
+  border-top-color: var(--primary-accent);
   border-radius: 50%;
   animation: spin 1s ease-in-out infinite;
   margin-bottom: 20px;
@@ -3396,7 +3515,7 @@ body {
   background: linear-gradient(
     135deg,
     #7c3aed,
-    #9b5cff
+    var(--primary-accent)
   );
 
   color: white;
@@ -28831,31 +28950,150 @@ print(
 }
 </file>
 
-<file path="backend/config.py">
-HOST = "localhost"
-USER = "root"
-PASSWORD = "suthar111"
-DATABASE = "movieverse_db"
-JWT_SECRET_KEY = "movieverse-secret-key-change-this"
-</file>
-
 <file path="backend/database.py">
+# File Path: backend/database.py
 from sqlalchemy import create_engine
+from sqlalchemy.engine import URL
+from backend.config import HOST, USER, PASSWORD, DATABASE
 
-from backend.config import *
-
-
+db_url = URL.create(
+    drivername="mysql+pymysql",
+    username=USER,
+    password=PASSWORD,
+    host=HOST,
+    database=DATABASE,
+)
 
 engine = create_engine(
-    
-    f"mysql+mysqlconnector://{USER}:{PASSWORD}@{HOST}/{DATABASE}",
-
-    pool_pre_ping=True
-
+    db_url,
+    pool_pre_ping=True,
+    pool_recycle=280,
 )
 </file>
 
+<file path="backend/routes/collections.py">
+# File Path: backend/routes/collections.py
+from flask import Blueprint, jsonify, request, g
+from sqlalchemy import text
+from backend.database import engine
+from backend.middleware.auth_middleware import token_required
+
+collections_bp = Blueprint("collections", __name__)
+
+# 1. Create a new collection
+@collections_bp.route("/collections", methods=["POST"])
+@token_required
+def create_collection():
+    user_id = g.user_id
+    data = request.get_json() or {}
+    
+    # 🚀 FIX: Prevent crash if title/description is None
+    title = (data.get("title") or "").strip()
+    description = (data.get("description") or "").strip()
+
+    if not title:
+        return jsonify({"error": "Collection title is required"}), 400
+
+    with engine.begin() as conn:
+        result = conn.execute(
+            text("""
+                INSERT INTO collections (user_id, title, description)
+                VALUES (:user_id, :title, :description)
+            """),
+            {"user_id": user_id, "title": title, "description": description}
+        )
+        collection_id = result.lastrowid
+
+    return jsonify({"message": "Collection created successfully", "collection_id": collection_id}), 201
+
+
+# 2. Get user's collections
+@collections_bp.route("/user/<int:user_id>/collections", methods=["GET"])
+def get_user_collections(user_id):
+    with engine.connect() as conn:
+        collections = conn.execute(
+            text("""
+                SELECT c.collection_id, c.title, c.description, c.created_at,
+                       (SELECT COUNT(*) FROM collection_movies cm WHERE cm.collection_id = c.collection_id) AS movie_count
+                FROM collections c
+                WHERE c.user_id = :user_id
+                ORDER BY c.created_at DESC
+            """),
+            {"user_id": user_id}
+        ).mappings().all()
+
+    return jsonify([dict(c) for c in collections]), 200
+
+
+# 3. Add movie to collection (With Ownership Security Check)
+@collections_bp.route("/collections/<int:collection_id>/movies", methods=["POST"])
+@token_required
+def add_movie_to_collection(collection_id):
+    user_id = g.user_id
+    data = request.get_json() or {}
+    movie_id = data.get("movie_id")
+
+    if not movie_id:
+        return jsonify({"error": "Movie ID is required"}), 400
+
+    with engine.begin() as conn:
+        col_owner = conn.execute(
+            text("SELECT user_id FROM collections WHERE collection_id = :cid"),
+            {"cid": collection_id}
+        ).fetchone()
+
+        if not col_owner:
+            return jsonify({"error": "Collection not found"}), 404
+
+        if int(col_owner[0]) != int(user_id):
+            return jsonify({"error": "Unauthorized: You can only edit your own collections"}), 403
+
+        exists = conn.execute(
+            text("SELECT id FROM collection_movies WHERE collection_id = :cid AND movie_id = :mid"),
+            {"cid": collection_id, "mid": movie_id}
+        ).fetchone()
+
+        if exists:
+            return jsonify({"message": "Movie is already in this collection"}), 400
+
+        conn.execute(
+            text("INSERT INTO collection_movies (collection_id, movie_id) VALUES (:cid, :mid)"),
+            {"cid": collection_id, "mid": movie_id}
+        )
+
+    return jsonify({"message": "Movie added to collection successfully"}), 200
+
+
+# 4. Get collection details
+@collections_bp.route("/collections/<int:collection_id>", methods=["GET"])
+def get_collection_details(collection_id):
+    with engine.connect() as conn:
+        col = conn.execute(
+            text("SELECT collection_id, title, description, created_at FROM collections WHERE collection_id = :cid"),
+            {"cid": collection_id}
+        ).mappings().first()
+
+        if not col:
+            return jsonify({"error": "Collection not found"}), 404
+
+        movies = conn.execute(
+            text("""
+                SELECT m.movie_id, m.title, m.release_year, m.runtime_minutes, m.poster_url, m.avg_rating
+                FROM collection_movies cm
+                JOIN movies m ON cm.movie_id = m.movie_id
+                WHERE cm.collection_id = :cid
+            """),
+            {"cid": collection_id}
+        ).mappings().all()
+
+    return jsonify({
+        "collection": dict(col),
+        "movies": [dict(m) for m in movies]
+    }), 200
+</file>
+
 <file path="backend/routes/movies.py">
+# File Path: backend/routes/movies.py
 from flask import Blueprint, jsonify, request
 from sqlalchemy import text
 from backend.database import engine
@@ -28864,22 +29102,12 @@ movies_bp = Blueprint("movies", __name__)
 
 @movies_bp.route("/movies", methods=["GET"])
 def get_movies():
-
-    page = request.args.get("page", default=1, type=int)
-    limit = request.args.get("limit", default=20, type=int)
-
-    if page < 1:
-        return jsonify({
-            "error": "Page must be at least 1"
-        }), 400
-
-    if limit < 1:
-        return jsonify({
-            "error": "Limit must be at least 1"
-        }), 400
-
-    if limit > 50:
-        limit = 50
+    try:
+        page = max(1, int(request.args.get("page", 1)))
+        limit = min(50, max(1, int(request.args.get("limit", 20))))
+    except ValueError:
+        page = 1
+        limit = 20
 
     offset = (page - 1) * limit
 
@@ -28891,7 +29119,7 @@ def get_movies():
             avg_rating,
             poster_url
         FROM movies
-        ORDER BY avg_rating DESC
+        ORDER BY avg_rating DESC, movie_id ASC
         LIMIT :limit OFFSET :offset
     """)
 
@@ -28909,21 +29137,20 @@ def get_movies():
         "limit": limit,
         "movies": [dict(movie) for movie in movies]
     }), 200
+
+
 @movies_bp.route("/movies/trending", methods=["GET"])
 def trending_movies():
-
-    limit = request.args.get("limit", default=10, type=int)
-
-    if limit < 1:
-        return jsonify({
-            "error": "Limit must be at least 1"
-        }), 400
-
-    if limit > 20:
+    try:
+        page = max(1, int(request.args.get("page", 1)))
+        limit = min(20, max(1, int(request.args.get("limit", 20))))
+    except ValueError:
+        page = 1
         limit = 20
 
-    with engine.connect() as conn:
+    offset = (page - 1) * limit
 
+    with engine.connect() as conn:
         movies = conn.execute(
             text("""
                 SELECT
@@ -28934,21 +29161,111 @@ def trending_movies():
                     poster_url
                 FROM movies
                 WHERE avg_rating IS NOT NULL
-                ORDER BY avg_rating DESC
-                LIMIT :limit
+                ORDER BY avg_rating DESC, movie_id ASC
+                LIMIT :limit OFFSET :offset
             """),
             {
-                "limit": limit
+                "limit": limit,
+                "offset": offset
             }
         ).mappings().all()
 
     return jsonify({
+        "page": page,
+        "limit": limit,
         "total_movies": len(movies),
         "movies": [dict(movie) for movie in movies]
+    }), 200
+
+
+# ⚡ LIGHTNING FAST OPTIMIZED EXPLORE API
+@movies_bp.route("/explore/movies", methods=["GET"])
+def explore_movies():
+    try:
+        page = max(1, int(request.args.get("page", 1)))
+        limit = min(50, max(1, int(request.args.get("limit", 20))))
+    except ValueError:
+        page = 1
+        limit = 20
+
+    offset = (page - 1) * limit
+
+    genre = request.args.get("genre", "All")
+    sort_by = request.args.get("sort_by", "Newest")
+    lang = request.args.get("lang", "All")
+    duration = request.args.get("duration", "All")
+    decade = request.args.get("decade", "All")
+
+    # Fast query using subqueries instead of heavy multi-joins which caused the 33s delay
+    sql = """
+        SELECT m.movie_id, m.title, m.release_year, m.runtime_minutes, m.avg_rating, m.poster_url
+        FROM movies m
+        WHERE 1=1
+    """
+    params = {"limit": limit, "offset": offset}
+
+    if genre and genre != "All":
+        sql += """ AND m.movie_id IN (
+            SELECT mg.movie_id FROM movie_genres mg 
+            JOIN genres g ON mg.genre_id = g.genre_id 
+            WHERE g.genre_name = :genre
+        )"""
+        params["genre"] = genre
+
+    if lang and lang != "All":
+        sql += """ AND m.movie_id IN (
+            SELECT ml.movie_id FROM movie_languages ml 
+            JOIN languages l ON ml.language_id = l.language_id 
+            WHERE l.language_name = :lang
+        )"""
+        params["lang"] = lang
+
+    if duration and duration != "All":
+        if duration == "Under 90m":
+            sql += " AND m.runtime_minutes < 90"
+        elif duration == "90-120m":
+            sql += " AND m.runtime_minutes BETWEEN 90 AND 120"
+        elif duration == "120m+":
+            sql += " AND m.runtime_minutes > 120"
+
+    if decade and decade != "All":
+        if decade == "2020s":
+            sql += " AND m.release_year BETWEEN 2020 AND 2029"
+        elif decade == "2010s":
+            sql += " AND m.release_year BETWEEN 2010 AND 2019"
+        elif decade == "2000s":
+            sql += " AND m.release_year BETWEEN 2000 AND 2009"
+        elif decade == "Classic":
+            sql += " AND m.release_year < 2000"
+
+    # Sorting logic
+    if sort_by == "Top Rated":
+        sql += " ORDER BY m.avg_rating DESC, m.movie_id ASC"
+    elif sort_by == "A-Z":
+        sql += " ORDER BY m.title ASC, m.movie_id ASC"
+    else:  # Newest Releases - Future years ko skip karke current/past years dikhayein
+        sql += """ 
+            ORDER BY CASE WHEN m.release_year > YEAR(CURDATE()) THEN 1 ELSE 0 END ASC, 
+            m.release_year DESC, 
+            m.movie_id ASC
+        """
+
+    sql += " LIMIT :limit OFFSET :offset"
+
+    with engine.connect() as conn:
+        result = conn.execute(text(sql), params).mappings().all()
+        movies_list = [dict(row) for row in result]
+        has_more = len(movies_list) == limit
+
+    return jsonify({
+        "page": page,
+        "has_more": has_more,
+        "movies": movies_list
     }), 200
 </file>
 
 <file path="backend/routes/preferences.py">
+# File Path: backend/routes/preferences.py
 from flask import Blueprint, request, jsonify, g
 from backend.database import engine
 from sqlalchemy import text
@@ -28961,16 +29278,17 @@ preferences_bp = Blueprint("preferences", __name__)
 def save_preferences():
     user_id = g.user_id
     data = request.get_json()
-    genres = data.get("genres", [])
 
-    print(f"👉 SAVING PREFERENCES -> User ID: {user_id}, Genres: {genres}") # 👈 Yeh add karo
-
+    # 🚀 FIX: Pehle data validate karo, fir print aur extract karo
     if not data:
         return jsonify({
             "error": "Request body is required"
         }), 400
-
-    # genres = data.get("genres")
+        
+    genres = data.get("genres", [])
+    
+    # Optional debugging statement, keeping it minimal without full user data dump
+    print(f"👉 SAVING PREFERENCES -> User ID: {user_id}") 
 
     if not genres or not isinstance(genres, list):
         return jsonify({
@@ -28997,7 +29315,6 @@ def save_preferences():
     favorite_genre = ", ".join(cleaned_genres)
 
     try:
-        # Check if preferences already exist for this user
         with engine.connect() as conn:
             existing = conn.execute(
                 text("""
@@ -29008,7 +29325,6 @@ def save_preferences():
                 {"user_id": user_id}
             ).first()
 
-        # Update or Insert preferences inside a transaction block
         with engine.begin() as conn:
             if existing:
                 conn.execute(
@@ -29047,10 +29363,122 @@ def save_preferences():
         }), 500
 </file>
 
+<file path="backend/routes/rating.py">
+# File Path: backend/routes/rating.py
+from flask import Blueprint, jsonify, request, g
+from sqlalchemy import text
+from backend.database import engine
+from backend.middleware.auth_middleware import token_required
+from backend.routes.review import sync_movie_avg_rating, ensure_base_rating_saved
+
+rating_bp = Blueprint("rating", __name__)
+
+@rating_bp.route("/ratings/<int:movie_id>", methods=["POST"])
+@token_required
+def rate_movie(movie_id):
+    user_id = g.user_id
+    data = request.get_json()
+
+    if not data or "rating" not in data:
+        return jsonify({"error": "Rating is required"}), 400
+
+    try:
+        rating = float(data["rating"])
+    except (TypeError, ValueError):
+        return jsonify({"error": "Rating must be a number"}), 400
+
+    if rating < 0.5 or rating > 5:
+        return jsonify({"error": "Rating must be between 0.5 and 5"}), 400
+
+    if rating * 2 != int(rating * 2):
+        return jsonify({"error": "Rating must be in 0.5 increments"}), 400
+
+    with engine.begin() as conn:
+        movie = conn.execute(
+            text("SELECT movie_id, title FROM movies WHERE movie_id = :movie_id"),
+            {"movie_id": movie_id}
+        ).first()
+
+        if movie is None:
+            return jsonify({"error": "Movie not found"}), 404
+
+        ensure_base_rating_saved(conn, movie_id)
+
+        existing = conn.execute(
+            text("SELECT rating_id FROM ratings WHERE user_id = :user_id AND movie_id = :movie_id"),
+            {"user_id": user_id, "movie_id": movie_id}
+        ).first()
+
+        if existing:
+            conn.execute(
+                text("UPDATE ratings SET rating = :rating, rated_at = CURRENT_TIMESTAMP WHERE user_id = :user_id AND movie_id = :movie_id"),
+                {"rating": rating, "user_id": user_id, "movie_id": movie_id}
+            )
+            sync_movie_avg_rating(conn, movie_id)
+            return jsonify({"message": "Rating updated successfully", "movie_id": movie_id, "rating": rating}), 200
+
+        conn.execute(
+            text("INSERT INTO ratings (user_id, movie_id, rating) VALUES (:user_id, :movie_id, :rating)"),
+            {"user_id": user_id, "movie_id": movie_id, "rating": rating}
+        )
+        sync_movie_avg_rating(conn, movie_id)
+
+    return jsonify({"message": "Rating added successfully", "movie_id": movie_id, "rating": rating}), 201
+
+
+@rating_bp.route("/ratings/<int:movie_id>", methods=["GET"])
+@token_required
+def get_movie_ratings(movie_id):
+    with engine.connect() as conn:
+        movie = conn.execute(
+            text("SELECT movie_id, title, avg_rating FROM movies WHERE movie_id = :movie_id"),
+            {"movie_id": movie_id}
+        ).first()
+
+        if movie is None:
+            return jsonify({"error": "Movie not found"}), 404
+
+        ratings = conn.execute(
+            text("SELECT r.rating, r.rated_at FROM ratings r WHERE r.movie_id = :movie_id ORDER BY r.rated_at DESC"),
+            {"movie_id": movie_id}
+        ).mappings().all()
+
+    rating_list = [dict(r) for r in ratings]
+
+    return jsonify({
+        "movie_id": movie.movie_id,
+        "title": movie.title,
+        "average_rating": movie.avg_rating,
+        "total_ratings": len(rating_list),
+        "ratings": rating_list
+    }), 200
+
+
+@rating_bp.route("/ratings/<int:movie_id>", methods=["DELETE"])
+@token_required
+def delete_rating(movie_id):
+    user_id = g.user_id
+
+    with engine.begin() as conn:
+        ensure_base_rating_saved(conn, movie_id)
+        result = conn.execute(
+            text("DELETE FROM ratings WHERE user_id = :user_id AND movie_id = :movie_id"),
+            {"user_id": user_id, "movie_id": movie_id}
+        )
+
+        if result.rowcount == 0:
+            return jsonify({"error": "Rating not found"}), 404
+
+        sync_movie_avg_rating(conn, movie_id)
+
+    return jsonify({"message": "Rating deleted successfully", "movie_id": movie_id}), 200
+</file>
+
 <file path="backend/routes/watchlist.py">
+# File Path: backend/routes/watchlist.py
 from flask import Blueprint, jsonify, g
 from sqlalchemy import text
-
+from sqlalchemy.exc import IntegrityError
 from backend.database import engine
 from backend.middleware.auth_middleware import token_required
 
@@ -29098,11 +29526,14 @@ def add_to_watchlist(movie_id):
                 }
             )
 
-    except Exception:
-
+    except IntegrityError:
+        # 🚀 FIX: Catch specific DB exception instead of bare 'except'
         return jsonify({
             "error": "Movie already exists in your watchlist"
         }), 409
+    except Exception as e:
+        print("Watchlist Insert Error:", e)
+        return jsonify({"error": "Failed to add movie to watchlist"}), 500
 
     return jsonify({
         "message": "Movie added to watchlist",
@@ -29139,7 +29570,6 @@ def get_watchlist():
             {"user_id": user_id}
         ).mappings().all()
 
-    # Convert SQLAlchemy RowMapping to normal dictionaries
     watchlist = [dict(movie) for movie in movies]
 
     return jsonify({
@@ -29352,6 +29782,302 @@ def get_movie_themes(movie_id):
     return [row[0] for row in rows]
 </file>
 
+<file path="backend/sql/create_table.sql">
+-- File: backend/sql/create_table.sql
+
+CREATE DATABASE IF NOT EXISTS movieverse_db;
+USE movieverse_db;
+
+-- 1. Movies & Basic Entities
+CREATE TABLE IF NOT EXISTS movies (
+    movie_id BIGINT PRIMARY KEY,
+    title VARCHAR(255) NOT NULL,
+    release_year SMALLINT,
+    tagline TEXT,
+    overview LONGTEXT,
+    runtime_minutes SMALLINT,
+    avg_rating DECIMAL(3,2),
+    poster_url TEXT
+);
+
+-- 🚀 P1 FIX #8 & #9: Base ratings table added directly to schema
+CREATE TABLE IF NOT EXISTS movie_base_ratings (
+    movie_id BIGINT PRIMARY KEY,
+    base_rating DECIMAL(3,2),
+    FOREIGN KEY (movie_id) REFERENCES movies(movie_id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS genres (
+    genre_id INT AUTO_INCREMENT PRIMARY KEY,
+    genre_name VARCHAR(100) NOT NULL UNIQUE
+);
+
+CREATE TABLE IF NOT EXISTS movie_genres (
+    movie_id BIGINT,
+    genre_id INT,
+    PRIMARY KEY (movie_id, genre_id),
+    FOREIGN KEY (movie_id) REFERENCES movies(movie_id) ON DELETE CASCADE,
+    FOREIGN KEY (genre_id) REFERENCES genres(genre_id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS languages (
+    language_id INT AUTO_INCREMENT PRIMARY KEY,
+    language_name VARCHAR(100) UNIQUE
+);
+
+CREATE TABLE IF NOT EXISTS movie_languages (
+    movie_id BIGINT,
+    language_id INT,
+    PRIMARY KEY (movie_id, language_id),
+    FOREIGN KEY (movie_id) REFERENCES movies(movie_id) ON DELETE CASCADE,
+    FOREIGN KEY (language_id) REFERENCES languages(language_id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS countries (
+    country_id INT AUTO_INCREMENT PRIMARY KEY,
+    country_name VARCHAR(100) NOT NULL UNIQUE
+);
+
+CREATE TABLE IF NOT EXISTS movie_countries (
+    movie_id BIGINT,
+    country_id INT,
+    PRIMARY KEY (movie_id, country_id),
+    FOREIGN KEY (movie_id) REFERENCES movies(movie_id) ON DELETE CASCADE,
+    FOREIGN KEY (country_id) REFERENCES countries(country_id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS themes (
+    theme_id INT AUTO_INCREMENT PRIMARY KEY,
+    theme_name VARCHAR(255) NOT NULL UNIQUE
+);
+
+CREATE TABLE IF NOT EXISTS movie_themes (
+    movie_id BIGINT,
+    theme_id INT,
+    PRIMARY KEY (movie_id, theme_id),
+    FOREIGN KEY (movie_id) REFERENCES movies(movie_id) ON DELETE CASCADE,
+    FOREIGN KEY (theme_id) REFERENCES themes(theme_id) ON DELETE CASCADE
+);
+
+-- 2. Cast & Crew
+CREATE TABLE IF NOT EXISTS actors (
+    actor_id INT AUTO_INCREMENT PRIMARY KEY,
+    actor_name VARCHAR(255) NOT NULL UNIQUE
+);
+
+CREATE TABLE IF NOT EXISTS movie_actors (
+    movie_id BIGINT,
+    actor_id INT,
+    role VARCHAR(255),
+    PRIMARY KEY (movie_id, actor_id),
+    FOREIGN KEY (movie_id) REFERENCES movies(movie_id) ON DELETE CASCADE,
+    FOREIGN KEY (actor_id) REFERENCES actors(actor_id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS directors (
+    director_id INT AUTO_INCREMENT PRIMARY KEY,
+    director_name VARCHAR(255) NOT NULL UNIQUE
+);
+
+CREATE TABLE IF NOT EXISTS movie_directors (
+    movie_id BIGINT,
+    director_id INT,
+    PRIMARY KEY (movie_id, director_id),
+    FOREIGN KEY (movie_id) REFERENCES movies(movie_id) ON DELETE CASCADE,
+    FOREIGN KEY (director_id) REFERENCES directors(director_id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS producers (
+    producer_id INT AUTO_INCREMENT PRIMARY KEY,
+    producer_name VARCHAR(255) NOT NULL UNIQUE
+);
+
+CREATE TABLE IF NOT EXISTS movie_producers (
+    movie_id BIGINT,
+    producer_id INT,
+    PRIMARY KEY (movie_id, producer_id),
+    FOREIGN KEY (movie_id) REFERENCES movies(movie_id) ON DELETE CASCADE,
+    FOREIGN KEY (producer_id) REFERENCES producers(producer_id) ON DELETE CASCADE
+);
+
+-- 3. Users & Authentication (🚀 P0 FIX #2: Hashed OTP, Expiry & Attempt Lockout Columns)
+CREATE TABLE IF NOT EXISTS users (
+    user_id INT AUTO_INCREMENT PRIMARY KEY,
+    username VARCHAR(100) NOT NULL UNIQUE,
+    email VARCHAR(255) NOT NULL UNIQUE,
+    password_hash VARCHAR(255) NOT NULL,
+    profile_image TEXT,
+    bio TEXT,
+    is_verified TINYINT(1) NOT NULL DEFAULT 0,
+    otp VARCHAR(255) DEFAULT NULL,
+    otp_expires_at DATETIME DEFAULT NULL,
+    otp_attempts INT NOT NULL DEFAULT 0,
+    reset_otp VARCHAR(255) DEFAULT NULL,
+    reset_otp_expires_at DATETIME DEFAULT NULL,
+    reset_otp_attempts INT NOT NULL DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 4. Social Features (Followers, Chat, Notifications)
+CREATE TABLE IF NOT EXISTS followers (
+    follower_id INT NOT NULL,
+    following_id INT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (follower_id, following_id),
+    FOREIGN KEY (follower_id) REFERENCES users(user_id) ON DELETE CASCADE,
+    FOREIGN KEY (following_id) REFERENCES users(user_id) ON DELETE CASCADE
+);
+
+-- 🚀 P1 FIX #8: Added is_read column to chat_messages
+CREATE TABLE IF NOT EXISTS chat_messages (
+    message_id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    sender_id INT NOT NULL,
+    receiver_id INT NOT NULL,
+    message TEXT NOT NULL,
+    is_read TINYINT(1) NOT NULL DEFAULT 0,
+    sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (sender_id) REFERENCES users(user_id) ON DELETE CASCADE,
+    FOREIGN KEY (receiver_id) REFERENCES users(user_id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS notifications (
+    notification_id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT NOT NULL,
+    sender_id INT DEFAULT NULL,
+    message TEXT NOT NULL,
+    type VARCHAR(50) DEFAULT 'general',
+    is_read TINYINT(1) NOT NULL DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
+    FOREIGN KEY (sender_id) REFERENCES users(user_id) ON DELETE SET NULL
+);
+
+-- 5. User Activities (Ratings, Reviews, Lists)
+CREATE TABLE IF NOT EXISTS user_preference (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT NOT NULL UNIQUE,
+    favorite_genre TEXT NOT NULL,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS ratings (
+    rating_id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT NOT NULL,
+    movie_id BIGINT NOT NULL,
+    rating DECIMAL(2,1) NOT NULL,
+    rated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY unique_rating (user_id, movie_id),
+    FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
+    FOREIGN KEY (movie_id) REFERENCES movies(movie_id) ON DELETE CASCADE
+);
+
+-- 🚀 P1 FIX #11: Added UNIQUE KEY (user_id, movie_id) to prevent duplicate reviews
+CREATE TABLE IF NOT EXISTS reviews (
+    review_id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT NOT NULL,
+    movie_id BIGINT NOT NULL,
+    review_text TEXT,
+    rating DECIMAL(2,1) DEFAULT 0.0,
+    is_spoiler TINYINT(1) NOT NULL DEFAULT 0,
+    likes INT DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_user_movie_review (user_id, movie_id),
+    FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
+    FOREIGN KEY (movie_id) REFERENCES movies(movie_id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS review_likes (
+    review_id BIGINT NOT NULL,
+    user_id INT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (review_id, user_id),
+    FOREIGN KEY (review_id) REFERENCES reviews(review_id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS review_comments (
+    comment_id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    review_id BIGINT NOT NULL,
+    user_id INT NOT NULL,
+    comment_text TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (review_id) REFERENCES reviews(review_id) ON DELETE CASCADE,
+    FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS watchlist (
+    user_id INT,
+    movie_id BIGINT,
+    added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (user_id, movie_id),
+    FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
+    FOREIGN KEY (movie_id) REFERENCES movies(movie_id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS favorites (
+    user_id INT,
+    movie_id BIGINT,
+    added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (user_id, movie_id),
+    FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
+    FOREIGN KEY (movie_id) REFERENCES movies(movie_id) ON DELETE CASCADE
+);
+
+-- 6. Collections & Sharing
+CREATE TABLE IF NOT EXISTS collections (
+    collection_id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT NOT NULL,
+    title VARCHAR(255) NOT NULL,
+    description TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS collection_movies (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    collection_id INT NOT NULL,
+    movie_id BIGINT NOT NULL,
+    added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_collection_movie (collection_id, movie_id),
+    FOREIGN KEY (collection_id) REFERENCES collections(collection_id) ON DELETE CASCADE,
+    FOREIGN KEY (movie_id) REFERENCES movies(movie_id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS shared_movies (
+    share_id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    sender_id INT NOT NULL,
+    receiver_id INT NOT NULL,
+    movie_id BIGINT NOT NULL,
+    message TEXT,
+    is_read TINYINT(1) NOT NULL DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (sender_id) REFERENCES users(user_id) ON DELETE CASCADE,
+    FOREIGN KEY (receiver_id) REFERENCES users(user_id) ON DELETE CASCADE,
+    FOREIGN KEY (movie_id) REFERENCES movies(movie_id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS search_history (
+    history_id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT,
+    search_query VARCHAR(255),
+    searched_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+);
+
+-- 7. Indexes for Performance Optimization
+CREATE INDEX idx_movies_title ON movies(title);
+CREATE INDEX idx_movies_year ON movies(release_year);
+CREATE INDEX idx_movies_rating ON movies(avg_rating);
+CREATE INDEX idx_movie_genres_movie ON movie_genres(movie_id);
+CREATE INDEX idx_movie_actors_movie ON movie_actors(movie_id);
+CREATE INDEX idx_movie_directors_movie ON movie_directors(movie_id);
+CREATE INDEX idx_ratings_movie ON ratings(movie_id);
+CREATE INDEX idx_reviews_movie ON reviews(movie_id);
+CREATE INDEX idx_watchlist_user ON watchlist(user_id);
+CREATE INDEX idx_chat_participants ON chat_messages(sender_id, receiver_id);
+</file>
+
 <file path="Frontend_react/index.html">
 <!doctype html>
 <html lang="en">
@@ -29359,12 +30085,13 @@ def get_movie_themes(movie_id):
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>NEXUS | The Cinematic Connection</title>
+    
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&display=swap"
-      rel="stylesheet"
-    />
+    
+    <!-- 🚀 FIX: Sirf Inter (Text) aur Cinzel (Logo) load kar rahe hain -->
+    <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    
     <style>
       html, body, #root { height: 100%; margin: 0; padding: 0; }
     </style>
@@ -29374,35 +30101,6 @@ def get_movie_themes(movie_id):
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>
-</file>
-
-<file path="Frontend_react/package.json">
-{
-  "name": "frontend_react",
-  "private": true,
-  "version": "0.0.0",
-  "type": "module",
-  "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "lint": "oxlint",
-    "preview": "vite preview"
-  },
-  "dependencies": {
-    "react": "^19.2.8",
-    "react-dom": "^19.2.8",
-    "react-router-dom": "^7.18.2",
-    "recharts": "^3.10.1",
-    "socket.io-client": "^4.8.4"
-  },
-  "devDependencies": {
-    "@types/react": "^19.2.17",
-    "@types/react-dom": "^19.2.3",
-    "@vitejs/plugin-react": "^6.0.4",
-    "oxlint": "^1.75.0",
-    "vite": "^8.2.0"
-  }
-}
 </file>
 
 <file path="Frontend_react/src/components/MovieRow.jsx">
@@ -29451,22 +30149,47 @@ export default React.memo(MovieRow);
 </file>
 
 <file path="Frontend_react/src/components/SearchModal.jsx">
+// File Path: Frontend_react/src/components/SearchModal.jsx
 import React, { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
-import { performSearch, getSearchHistory, clearSearchHistory, toggleFollowUser } from "../services/homeService";
-import "../styles/searchModal.css"; 
+import { API_BASE_URL } from "../config/api";
+import {
+  performSearch,
+  saveSearchQuery,
+  getSearchHistory,
+  clearSearchHistory,
+  getFollowingList
+} from "../services/homeService";
+import "../styles/searchModal.css";
 
 export default function SearchModal({ isOpen, onClose }) {
   const [searchTerm, setSearchTerm] = useState("");
-  const [searchType, setSearchType] = useState("movie"); // "movie" or "user"
+  const [searchType, setSearchType] = useState("movie"); // "movie", "actor", or "user"
   const [results, setResults] = useState([]);
   const [history, setHistory] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [followStatus, setFollowStatus] = useState({}); // Tracking follow states
+  const [followStatus, setFollowStatus] = useState({});
 
+  const loggedInUserId = localStorage.getItem("user_id");
+  const token = localStorage.getItem("token");
+
+  // 1. Escape Key Handler to close modal
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e) => {
+      if (e.key === "Escape") {
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isOpen, onClose]);
+
+  // 2. Load Search History & Initial Following Status on Open
   useEffect(() => {
     if (isOpen) {
       fetchHistory();
+      fetchInitialFollowing();
     } else {
       setSearchTerm("");
       setResults([]);
@@ -29475,7 +30198,23 @@ export default function SearchModal({ isOpen, onClose }) {
 
   const fetchHistory = async () => {
     const hist = await getSearchHistory();
-    setHistory(hist);
+    setHistory(Array.isArray(hist) ? hist : []);
+  };
+
+  const fetchInitialFollowing = async () => {
+    if (!loggedInUserId) return;
+    try {
+      const followingList = await getFollowingList(loggedInUserId);
+      if (Array.isArray(followingList)) {
+        const statusMap = {};
+        followingList.forEach((u) => {
+          statusMap[u.user_id] = "Following";
+        });
+        setFollowStatus(statusMap);
+      }
+    } catch (err) {
+      console.error("Failed to fetch following status:", err);
+    }
   };
 
   const handleClearHistory = async () => {
@@ -29483,15 +30222,46 @@ export default function SearchModal({ isOpen, onClose }) {
     if (success) setHistory([]);
   };
 
-  const handleFollowAction = async (e, userId) => {
-    e.preventDefault(); // Link par click hone se roke
+  // 🚀 P1 FIX #15: Save search query only on Enter or clicking a result
+  const handleResultClick = (labelToSave) => {
+    const queryToSave = (labelToSave || searchTerm || "").trim();
+    if (queryToSave.length >= 2) {
+      saveSearchQuery(queryToSave);
+    }
+    onClose();
+  };
+
+  const handleInputKeyDown = async (e) => {
+    if (e.key === "Enter" && searchTerm.trim().length >= 2) {
+      await saveSearchQuery(searchTerm.trim());
+      fetchHistory();
+    }
+  };
+
+  // 3. Secure Token-based Follow Toggle
+  const handleFollowAction = async (e, targetUserId) => {
+    e.preventDefault();
     e.stopPropagation();
-    const res = await toggleFollowUser(userId);
-    if (res && res.status) {
-      setFollowStatus(prev => ({
-        ...prev,
-        [userId]: res.status === "followed" ? "Following" : "Follow"
-      }));
+    if (!token) return;
+
+    try {
+      const res = await fetch(`${API_BASE_URL}/user/${targetUserId}/follow`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
+        }
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        setFollowStatus((prev) => ({
+          ...prev,
+          [targetUserId]: data.status === "followed" || data.is_following ? "Following" : "Follow"
+        }));
+      }
+    } catch (err) {
+      console.error("Follow action failed:", err);
     }
   };
 
@@ -29499,62 +30269,65 @@ export default function SearchModal({ isOpen, onClose }) {
     const delayDebounceFn = setTimeout(async () => {
       if (searchTerm.trim().length > 1) {
         setLoading(true);
-        const data = await performSearch(searchTerm, searchType);
-        setResults(data);
+        const data = await performSearch(searchTerm, searchType, false);
+        setResults(Array.isArray(data) ? data : []);
         setLoading(false);
       } else {
         setResults([]);
       }
-    }, 500); 
+    }, 400);
 
     return () => clearTimeout(delayDebounceFn);
-  }, [searchTerm, searchType]); 
+  }, [searchTerm, searchType]);
 
   if (!isOpen) return null;
 
   return (
     <div className="search-overlay" onClick={onClose}>
       <div className="search-modal-content" onClick={(e) => e.stopPropagation()}>
-        
         <div className="search-input-wrapper">
           <svg className="search-icon-inside" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#888" strokeWidth="2">
             <circle cx="11" cy="11" r="8"></circle>
             <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
           </svg>
-          <input 
-            type="text" 
-            placeholder={`Search for ${searchType}s...`} 
+          <input
+            type="text"
+            placeholder={`Search for ${searchType}s...`}
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
+            onKeyDown={handleInputKeyDown}
             autoFocus
           />
           <button className="close-search-btn" onClick={onClose}>ESC</button>
         </div>
 
         <div className="search-tabs">
-          <button 
+          <button
             className={`s-tab ${searchType === "movie" ? "active" : ""}`}
             onClick={() => setSearchType("movie")}
           >Movies</button>
-          <button className={`s-tab ${searchType === "actor" ? "active" : ""}`} onClick={() => setSearchType("actor")}>Actors</button>
-          <button 
+          <button
+            className={`s-tab ${searchType === "actor" ? "active" : ""}`}
+            onClick={() => setSearchType("actor")}
+          >Actors</button>
+          <button
             className={`s-tab ${searchType === "user" ? "active" : ""}`}
             onClick={() => setSearchType("user")}
           >Users</button>
         </div>
-        
+
         <div className="search-results-container">
           {loading && <p className="search-msg">Searching...</p>}
-          
+
           {!loading && searchTerm.length < 2 && history.length > 0 && (
             <div className="search-history-section">
               <div className="sh-header">
                 <h4>Recent Searches</h4>
                 <button onClick={handleClearHistory} className="clear-hist-btn">Clear All</button>
               </div>
-              {history.slice(0, 5).map(item => (
-                <div 
-                  key={item.history_id} 
+              {history.slice(0, 8).map((item) => (
+                <div
+                  key={item.history_id}
                   className="history-item"
                   onClick={() => setSearchTerm(item.search_query)}
                 >
@@ -29573,37 +30346,82 @@ export default function SearchModal({ isOpen, onClose }) {
               {results.map((item, idx) => {
                 if (searchType === "movie") {
                   return (
-                    <Link to={`/movie/${item.movie_id}`} key={idx} className="search-result-card" onClick={onClose}>
+                    <Link
+                      to={`/movie/${item.movie_id}`}
+                      key={item.movie_id || idx}
+                      className="search-result-card"
+                      onClick={() => handleResultClick(item.title)}
+                    >
                       <div className="src-poster-wrapper">
                         <img src={item.poster_url} alt={item.title} className="src-poster" />
                       </div>
                       <div className="src-info">
                         <h4>{item.title}</h4>
-                        <span>{item.release_year} • ⭐ {item.avg_rating}</span>
+                        <span>{item.release_year} • ⭐ {item.avg_rating || "N/A"}</span>
                       </div>
                     </Link>
                   );
                 } else if (searchType === "user") {
+                  const isFollowing = followStatus[item.user_id] === "Following";
+                  const validAvatar =
+                    item.profile_image && /^https?:\/\//i.test(item.profile_image)
+                      ? item.profile_image
+                      : null;
+
                   return (
-                    <Link to={`/profile/${item.user_id}`} key={idx} className="search-result-card" onClick={onClose}>
-                      <div className="src-avatar">
-                        {item.username.charAt(0).toUpperCase()}
+                    <Link
+                      to={`/profile/${item.user_id}`}
+                      key={item.user_id || idx}
+                      className="search-result-card"
+                      onClick={() => handleResultClick(item.username)}
+                      style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}
+                    >
+                      <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+                        <div className="src-avatar">
+                          {validAvatar ? (
+                            <img src={validAvatar} alt={item.username} />
+                          ) : (
+                            item.username.charAt(0).toUpperCase()
+                          )}
+                        </div>
+                        <div className="src-info">
+                          <h4>@{item.username}</h4>
+                        </div>
                       </div>
-                      <div className="src-info">
-                        <h4>@{item.username}</h4>
-                      </div>
+                      {Number(item.user_id) !== Number(loggedInUserId) && (
+                        <button
+                          onClick={(e) => handleFollowAction(e, item.user_id)}
+                          style={{
+                            padding: "6px 14px",
+                            borderRadius: "20px",
+                            fontSize: "12px",
+                            fontWeight: "600",
+                            cursor: "pointer",
+                            background: isFollowing ? "transparent" : "var(--primary-accent)",
+                            color: "#fff",
+                            border: isFollowing ? "1px solid rgba(255,255,255,0.25)" : "none"
+                          }}
+                        >
+                          {isFollowing ? "Following" : "Follow"}
+                        </button>
+                      )}
                     </Link>
                   );
                 } else {
-                  // Actors Search Result Card
+                  const cleanActor = item.actor_name.split(" as ")[0];
                   return (
-                    <Link to={`/actor/${encodeURIComponent(item.actor_name.split(" as ")[0])}`} key={idx} className="search-result-card" onClick={onClose}>
+                    <Link
+                      to={`/actor/${encodeURIComponent(cleanActor)}`}
+                      key={idx}
+                      className="search-result-card"
+                      onClick={() => handleResultClick(cleanActor)}
+                    >
                       <div className="src-avatar" style={{ background: "linear-gradient(135deg, #1a4a6e, #1db954)" }}>
-                        {item.actor_name.charAt(0).toUpperCase()}
+                        {cleanActor.charAt(0).toUpperCase()}
                       </div>
                       <div className="src-info">
                         <h4 style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                          {item.actor_name.split(" as ")[0]}
+                          {cleanActor}
                         </h4>
                         <span style={{ fontSize: "12px", color: "#888" }}>Actor / Cast</span>
                       </div>
@@ -29614,7 +30432,6 @@ export default function SearchModal({ isOpen, onClose }) {
             </div>
           )}
         </div>
-
       </div>
     </div>
   );
@@ -29691,7 +30508,7 @@ export default function Actor() {
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: "30px", borderBottom: "1px solid #333", paddingBottom: "20px" }}>
           <div style={{ display: "flex", alignItems: "center", gap: "20px" }}>
             <div style={{ 
-              width: "80px", height: "80px", borderRadius: "50%", background: "#9b5cff", 
+              width: "80px", height: "80px", borderRadius: "50%", background: "var(--primary-accent)", 
               display: "flex", alignItems: "center", justifyContent: "center", fontSize: "32px", fontWeight: "bold" 
             }}>
               {name ? name.charAt(0).toUpperCase() : "?"}
@@ -29748,7 +30565,7 @@ export default function Actor() {
         </div>
 
         {loading && (
-          <div style={{ textAlign: "center", padding: "30px", color: "#9b5cff", fontSize: "16px", fontWeight: "bold" }}>
+          <div style={{ textAlign: "center", padding: "30px", color: "var(--primary-accent)", fontSize: "16px", fontWeight: "bold" }}>
             ⏳ Loading more movies...
           </div>
         )}
@@ -29768,9 +30585,289 @@ export default function Actor() {
 }
 </file>
 
+<file path="Frontend_react/src/pages/ExploreMovies.jsx">
+// File Path: Frontend_react/src/pages/ExploreMovies.jsx
+import React, { useState, useEffect, useRef, useCallback } from "react";
+import { Link, useLocation, useSearchParams } from "react-router-dom";
+import { API_BASE_URL } from "../config/api"; // 🚀 FIX N4
+import Navbar from "../components/Navbar";
+import SearchModal from "../components/SearchModal";
+import { getSurpriseMovie } from "../services/homeService";
+import { MovieGridSkeleton } from "../components/SkeletonLoader"; 
+import "../styles/explore.css";
+
+export default function ExploreMovies() {
+  const location = useLocation();
+  const [searchParams] = useSearchParams();
+  const initialGenre = searchParams.get("genre") || location.state?.genre || "All";
+
+  const [movies, setMovies] = useState([]);
+  const [page, setPage] = useState(1);
+  const [hasMore, setHasMore] = useState(true);
+  const [loading, setLoading] = useState(false);
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
+
+  const [sortBy, setSortBy] = useState("Newest");
+  const [selectedGenre, setSelectedGenre] = useState(initialGenre);
+  const [selectedLang, setSelectedLang] = useState("All");
+  const [selectedDuration, setSelectedDuration] = useState("All");
+  const [selectedDecade, setSelectedDecade] = useState("All");
+
+  const observer = useRef();
+
+  const lastMovieElementRef = useCallback(
+    (node) => {
+      if (loading) return;
+      if (observer.current) observer.current.disconnect();
+      observer.current = new IntersectionObserver((entries) => {
+        if (entries[0].isIntersecting && hasMore) {
+          setPage((prevPage) => prevPage + 1);
+        }
+      });
+      if (node) observer.current.observe(node);
+    },
+    [loading, hasMore]
+  );
+
+  const fetchMovies = async (pageNum) => {
+    setLoading(true);
+    try {
+      // 🚀 FIX N4
+      const url = `${API_BASE_URL}/explore/movies?page=${pageNum}&limit=20&genre=${encodeURIComponent(
+        selectedGenre
+      )}&sort_by=${encodeURIComponent(sortBy)}&lang=${encodeURIComponent(
+        selectedLang
+      )}&duration=${encodeURIComponent(
+        selectedDuration
+      )}&decade=${encodeURIComponent(selectedDecade)}`;
+
+      const res = await fetch(url);
+      const data = await res.json();
+
+      if (!res.ok || !data.movies) {
+        console.error("API Error:", data.error || "Movies not found");
+        return;
+      }
+
+      setMovies((prev) =>
+        pageNum === 1 ? data.movies : [...prev, ...data.movies]
+      );
+      setHasMore(data.has_more);
+    } catch (error) {
+      console.error("Explore fetch error:", error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    setPage(1);
+    fetchMovies(1);
+    // eslint-disable-next-line
+  }, [selectedGenre, sortBy, selectedLang, selectedDuration, selectedDecade]);
+
+  useEffect(() => {
+    if (page > 1) fetchMovies(page);
+    // eslint-disable-next-line
+  }, [page]);
+
+  const clearFilters = () => {
+    setSortBy("Newest");
+    setSelectedGenre("All");
+    setSelectedLang("All");
+    setSelectedDuration("All");
+    setSelectedDecade("All");
+  };
+
+  const [isSurprising, setIsSurprising] = useState(false);
+
+  const handleSurpriseMe = async () => {
+    setIsSurprising(true);
+    const data = await getSurpriseMovie();
+    if (data && data.movie_id) {
+      setMovies([data]);
+      setHasMore(false);
+    } else {
+      alert("Oops! Couldn't find a surprise movie right now.");
+    }
+    setIsSurprising(false);
+  };
+
+  const genresList = [
+    "All", "Action", "Comedy", "Drama", "Horror", 
+    "Sci-Fi", "Romance", "Thriller", "Mystery"
+  ];
+  const durationList = ["All", "Under 90m", "90-120m", "120m+"];
+
+  return (
+    <div className="explore-wrapper">
+      <Navbar onOpenSearch={() => setIsSearchOpen(true)} />
+      <SearchModal
+        isOpen={isSearchOpen}
+        onClose={() => setIsSearchOpen(false)}
+      />
+
+      <div className="explore-layout">
+        <aside className="explore-sidebar">
+          <div className="filter-header">
+            <h3>Filters <span>{movies.length > 0 ? "Active" : ""}</span></h3>
+            <button onClick={clearFilters} className="clear-btn">✕ Clear</button>
+          </div>
+
+          <div className="filter-scroll-area">
+            {/* SORTING */}
+            <div className="filter-section">
+              <label>SORT BY</label>
+              <div className="custom-select-wrapper">
+                <select value={sortBy} onChange={(e) => setSortBy(e.target.value)} className="filter-select">
+                  <option value="Newest">Newest Releases</option>
+                  <option value="Top Rated">Top Rated</option>
+                  <option value="A-Z">Alphabetical (A-Z)</option>
+                </select>
+              </div>
+            </div>
+
+            {/* GENRES */}
+            <div className="filter-section">
+              <label>GENRE</label>
+              <div className="genre-badges-grid">
+                {genresList.map((g) => (
+                  <button
+                    key={g}
+                    className={`filter-badge ${selectedGenre === g ? "active" : ""}`}
+                    onClick={() => setSelectedGenre(g)}
+                  >
+                    {selectedGenre === g && <span className="active-dot"></span>}
+                    {g}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* LANGUAGES */}
+            <div className="filter-section">
+              <label>LANGUAGE</label>
+              <div className="custom-select-wrapper">
+                <select value={selectedLang} onChange={(e) => setSelectedLang(e.target.value)} className="filter-select">
+                  <option value="All">All Languages</option>
+                  <option value="English">English</option>
+                  <option value="Hindi">Hindi</option>
+                  <option value="Japanese">Japanese</option>
+                  <option value="Korean">Korean</option>
+                </select>
+              </div>
+            </div>
+
+            {/* DECADE */}
+            <div className="filter-section">
+              <label>DECADE</label>
+              <div className="custom-select-wrapper">
+                <select value={selectedDecade} onChange={(e) => setSelectedDecade(e.target.value)} className="filter-select">
+                  <option value="All">All Time</option>
+                  <option value="2020s">2020s</option>
+                  <option value="2010s">2010s</option>
+                  <option value="2000s">2000s</option>
+                  <option value="Classic">Classics (Pre-2000)</option>
+                </select>
+              </div>
+            </div>
+
+            {/* DURATION */}
+            <div className="filter-section">
+              <label>DURATION</label>
+              <div className="duration-pills">
+                {durationList.map((dur) => (
+                  <button
+                    key={dur}
+                    className={`dur-pill ${selectedDuration === dur ? "active" : ""}`}
+                    onClick={() => setSelectedDuration(dur)}
+                  >
+                    {dur}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* SURPRISE ME BUTTON */}
+            <div className="surprise-me-box-container">
+              <button
+                className="btn-surprise-me-simple"
+                onClick={handleSurpriseMe}
+                disabled={isSurprising}
+              >
+                {isSurprising ? "Searching..." : "Surprise Me"}
+              </button>
+            </div>
+          </div>
+        </aside>
+
+        <main className="explore-main">
+          {/* Active Tags Bar */}
+          <div className="active-tags-bar">
+            {selectedGenre !== "All" && <span className="glow-tag">{selectedGenre}</span>}
+            {selectedLang !== "All" && <span className="glow-tag">{selectedLang}</span>}
+            {selectedDuration !== "All" && <span className="glow-tag">{selectedDuration}</span>}
+            {selectedDecade !== "All" && <span className="glow-tag">{selectedDecade}</span>}
+            <span className="plain-tag">Sort: {sortBy}</span>
+          </div>
+
+          {loading && page === 1 ? (
+            <MovieGridSkeleton count={12} />
+          ) : (
+            <div className="premium-movie-grid">
+              {movies.map((movie, index) => {
+                const isLast = movies.length === index + 1;
+                return (
+                  <Link
+                    to={`/movie/${movie.movie_id}`}
+                    key={movie.movie_id}
+                    ref={isLast ? lastMovieElementRef : null}
+                    className="premium-movie-card"
+                  >
+                    <div className="card-img-wrapper">
+                      <img src={movie.poster_url} alt={movie.title} loading="lazy" />
+                      <div className="card-overlay">
+                        <span className="play-btn">▶</span>
+                      </div>
+                      {movie.avg_rating && (
+                        <div className="rating-badge">★ {Number(movie.avg_rating).toFixed(1)}</div>
+                      )}
+                    </div>
+                    <div className="card-info">
+                      <h4>{movie.title}</h4>
+                      <p>{movie.release_year} • Movie</p>
+                    </div>
+                  </Link>
+                );
+              })}
+            </div>
+          )}
+
+          {loading && page > 1 && (
+            <div className="ex-loader">
+              <div className="spinner"></div>
+              <span>Loading more...</span>
+            </div>
+          )}
+
+          {!hasMore && movies.length > 0 && (
+            <div className="end-msg">🎉 You've explored all movies in this category!</div>
+          )}
+          {!loading && movies.length === 0 && (
+            <div className="empty-state">No movies found for these filters.</div>
+          )}
+        </main>
+      </div>
+    </div>
+  );
+}
+</file>
+
 <file path="Frontend_react/src/pages/GenreSelection.jsx">
+// File Path: Frontend_react/src/pages/GenreSelection.jsx
 import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { API_BASE_URL } from "../config/api";
 import "../styles/genre-selection.css";
 
 const genres = [
@@ -29822,19 +30919,18 @@ export default function GenreSelection() {
     setError("");
 
     try {
-      // 🌟 Map selected IDs to actual genre names (strings) so backend receives a list of strings
       const selectedGenreNames = genres
         .filter((genre) => selectedGenres.includes(genre.id))
         .map((genre) => genre.name);
 
-      const response = await fetch("http://127.0.0.1:5000/preferences", {
+      const response = await fetch(`${API_BASE_URL}/preferences`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           "Authorization": `Bearer ${token}`
         },
         body: JSON.stringify({
-          genres: selectedGenreNames // 👈 Sending names array to match backend string expectation
+          genres: selectedGenreNames
         })
       });
 
@@ -29848,7 +30944,6 @@ export default function GenreSelection() {
 
       localStorage.setItem("selectedGenres", JSON.stringify(selectedGenreNames));
       navigate("/home");
-
     } catch (err) {
       console.error("Preference connection error:", err);
       setError("Unable to connect to server.");
@@ -29870,9 +30965,7 @@ export default function GenreSelection() {
         <div className="genre-header">
           <div className="genre-icon">🎬</div>
           <h1>Tell us what you love</h1>
-          <p>
-            Choose a few genres you enjoy and we'll personalize your MovieVerse experience.
-          </p>
+          <p>Choose a few genres you enjoy and we'll personalize your MovieVerse experience.</p>
         </div>
 
         <div className="selection-info">
@@ -29898,22 +30991,15 @@ export default function GenreSelection() {
           })}
         </div>
 
-        {error && (
-          <div style={{ color: "#ff4757", textAlign: "center", marginBottom: "15px", fontSize: "14px" }}>
-            {error}
-          </div>
-        )}
+        {error && <div style={{ color: "#ff4757", textAlign: "center", marginBottom: "15px", fontSize: "14px" }}>{error}</div>}
 
         <div className="genre-bottom">
           {selectedGenres.length < 3 ? (
             <p className="genre-hint">
-              Select {3 - selectedGenres.length} more
-              {3 - selectedGenres.length === 1 ? " genre" : " genres"}
+              Select {3 - selectedGenres.length} more {3 - selectedGenres.length === 1 ? " genre" : " genres"}
             </p>
           ) : (
-            <p className="genre-ready">
-              Great! Your recommendations are ready.
-            </p>
+            <p className="genre-ready">Great! Your recommendations are ready.</p>
           )}
 
           <button
@@ -30068,8 +31154,10 @@ export default function MonthlyReview() {
 </file>
 
 <file path="Frontend_react/src/pages/signup.jsx">
+// File Path: Frontend_react/src/pages/signup.jsx
 import React, { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import { API_BASE_URL } from "../config/api";
 import PosterAnimation from "../components/PosterAnimation";
 import "../styles/signup.css";
 
@@ -30080,39 +31168,32 @@ export default function Signup() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
-
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
-
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
 
-  // 🔥 NAYA: OTP ke liye states
   const [isOtpSent, setIsOtpSent] = useState(false);
   const [otp, setOtp] = useState("");
 
   const handleSignup = async (e) => {
     e.preventDefault();
-    setError("");
-    setSuccess("");
+    setError(""); setSuccess("");
 
     if (!username || !email || !password || !confirmPassword) {
-      setError("Please fill in all fields");
-      return;
+      setError("Please fill in all fields"); return;
     }
     if (password !== confirmPassword) {
-      setError("Passwords do not match");
-      return;
+      setError("Passwords do not match"); return;
     }
     if (password.length < 6) {
-      setError("Password must be at least 6 characters");
-      return;
+      setError("Password must be at least 6 characters"); return;
     }
 
     setLoading(true);
     try {
-      const response = await fetch("http://127.0.0.1:5000/register", {
+      const response = await fetch(`${API_BASE_URL}/register`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username, email, password })
@@ -30125,36 +31206,26 @@ export default function Signup() {
         setLoading(false);
         return;
       }
-
-      console.log("Registration successful:", data);
       
-      // 🔥 NAYA: Redirect karne ki jagah OTP screen dikhao
       setSuccess("Account created! Please check your email for the OTP.");
       setIsOtpSent(true); 
-      setLoading(false);
-
     } catch (error) {
-      console.error("Signup error:", error);
-      setError("Unable to connect to server. Make sure Flask is running.");
+      setError("Unable to connect to server.");
+    } finally {
       setLoading(false);
     }
   };
 
-  // 🔥 NAYA: OTP Verify karne ka function
   const handleVerifyOtp = async (e) => {
     e.preventDefault();
-    setError("");
-    setSuccess("");
-    setLoading(true);
+    setError(""); setSuccess(""); setLoading(true);
 
     if (!otp) {
-      setError("Please enter the 6-digit OTP");
-      setLoading(false);
-      return;
+      setError("Please enter the 6-digit OTP"); setLoading(false); return;
     }
 
     try {
-      const response = await fetch("http://127.0.0.1:5000/verify-otp", {
+      const response = await fetch(`${API_BASE_URL}/verify-otp`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email: email, otp: otp })
@@ -30169,14 +31240,27 @@ export default function Signup() {
       }
 
       setSuccess("Email verified successfully! Redirecting to login...");
-      
-      setTimeout(() => {
-        navigate("/login");
-      }, 2000);
-
+      setTimeout(() => navigate("/login"), 1500);
     } catch (error) {
       setError("Unable to connect to server.");
       setLoading(false);
+    }
+  };
+
+  const handleResendOtp = async () => {
+    setError(""); setSuccess("Sending new OTP...");
+    try {
+      const res = await fetch(`${API_BASE_URL}/resend-otp`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      setSuccess("New OTP sent!");
+    } catch (e) {
+      setError(e.message || "Failed to resend");
+      setSuccess("");
     }
   };
 
@@ -30190,15 +31274,11 @@ export default function Signup() {
         <div className="signup-card">
           <h1>{isOtpSent ? "Verify Email" : "Create Account"}</h1>
           <p className="signup-subtitle">
-            {isOtpSent 
-              ? "We've sent a 6-digit code to your email." 
-              : "Join MovieVerse and discover movies you'll love."}
+            {isOtpSent ? "We've sent a 6-digit code to your email." : "Join MovieVerse and discover movies you'll love."}
           </p>
 
-          {/* 🔥 NAYA: Agar OTP nahi bheja hai toh Signup form, warna OTP form */}
           {!isOtpSent ? (
             <form onSubmit={handleSignup}>
-              {/* USERNAME */}
               <div className="signup-input-group">
                 <label>Username</label>
                 <div className="signup-input-wrapper">
@@ -30207,7 +31287,6 @@ export default function Signup() {
                 </div>
               </div>
 
-              {/* EMAIL */}
               <div className="signup-input-group">
                 <label>Email</label>
                 <div className="signup-input-wrapper">
@@ -30216,7 +31295,6 @@ export default function Signup() {
                 </div>
               </div>
 
-              {/* PASSWORD */}
               <div className="signup-input-group">
                 <label>Password</label>
                 <div className="signup-input-wrapper">
@@ -30228,7 +31306,6 @@ export default function Signup() {
                 </div>
               </div>
 
-              {/* CONFIRM PASSWORD */}
               <div className="signup-input-group">
                 <label>Confirm Password</label>
                 <div className="signup-input-wrapper">
@@ -30248,19 +31325,12 @@ export default function Signup() {
               </button>
             </form>
           ) : (
-            /* 🔥 NAYA: OTP VERIFICATION FORM */
             <form onSubmit={handleVerifyOtp}>
               <div className="signup-input-group">
                 <label>Enter 6-Digit OTP</label>
                 <div className="signup-input-wrapper">
                   <span className="signup-input-icon">🔑</span>
-                  <input 
-                    type="text" 
-                    placeholder="e.g. 123456" 
-                    value={otp} 
-                    onChange={(e) => setOtp(e.target.value)} 
-                    maxLength="6"
-                  />
+                  <input type="text" placeholder="e.g. 123456" value={otp} onChange={(e) => setOtp(e.target.value)} maxLength="6" />
                 </div>
               </div>
 
@@ -30270,6 +31340,10 @@ export default function Signup() {
               <button type="submit" className="signup-button" disabled={loading}>
                 {loading ? "Verifying..." : "Verify & Login"}
               </button>
+              
+              <div style={{ textAlign: "center", marginTop: "15px" }}>
+                <span style={{ fontSize: "12px", color: "#888", cursor: "pointer", textDecoration: "underline" }} onClick={handleResendOtp}>Resend OTP</span>
+              </div>
             </form>
           )}
 
@@ -30278,6 +31352,123 @@ export default function Signup() {
             <Link to="/login">Login</Link>
           </div>
         </div>
+      </div>
+    </div>
+  );
+}
+</file>
+
+<file path="Frontend_react/src/pages/Watchlist.jsx">
+// File Path: Frontend_react/src/pages/Watchlist.jsx
+import React, { useState, useEffect } from "react";
+import { Link, useNavigate } from "react-router-dom";
+import { getWatchlist, removeFromWatchlist } from "../services/homeService";
+import Navbar from "../components/Navbar";
+import SearchModal from "../components/SearchModal";
+import "../styles/watchlist.css";
+
+export default function Watchlist() {
+  const navigate = useNavigate();
+  const [movies, setMovies] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const [sortOption, setSortOption] = useState("recent");
+
+  useEffect(() => {
+    window.scrollTo(0, 0);
+    fetchWatchlist();
+  }, []);
+
+  const fetchWatchlist = async () => {
+    setLoading(true);
+    const data = await getWatchlist();
+    setMovies(data || []);
+    setLoading(false);
+  };
+
+  const handleRemove = async (movieId, e) => {
+    e.preventDefault();
+    const success = await removeFromWatchlist(movieId);
+    if (success) {
+      setMovies((prev) => prev.filter((m) => m.movie_id !== movieId));
+    }
+  };
+
+  // 🚀 FIX: Fake alert ki jagah Watchlist se remove karke Movie Review page par le jayega
+  const handleMarkWatched = async (movieId, e) => {
+    e.preventDefault();
+    await removeFromWatchlist(movieId);
+    setMovies((prev) => prev.filter((m) => m.movie_id !== movieId));
+    navigate(`/movie/${movieId}`);
+  };
+
+  const sortedMovies = [...movies].sort((a, b) => {
+    if (sortOption === "recent") return new Date(b.added_at) - new Date(a.added_at);
+    if (sortOption === "rating") return (b.avg_rating || 0) - (a.avg_rating || 0);
+    if (sortOption === "alpha") return (a.title || "").localeCompare(b.title || "");
+    return 0;
+  });
+
+  return (
+    <div className="watchlist-page">
+      <Navbar onOpenSearch={() => setIsSearchOpen(true)} />
+      <SearchModal isOpen={isSearchOpen} onClose={() => setIsSearchOpen(false)} />
+
+      <div className="wl-container">
+        <header className="wl-header">
+          <h1>My Watchlist</h1>
+          <p>Your curated collection of must-see movies ({movies.length} items).</p>
+          
+          <div className="wl-filters">
+            <div className="wl-sort-group">
+              <span className="wl-label">Sort by:</span>
+              <select className="wl-select" value={sortOption} onChange={(e) => setSortOption(e.target.value)}>
+                <option value="recent">Recently Added</option>
+                <option value="rating">Highest Rated</option>
+                <option value="alpha">Alphabetical</option>
+              </select>
+            </div>
+          </div>
+        </header>
+
+        {loading ? (
+          <h2 className="loading-text">Loading Collection...</h2>
+        ) : movies.length === 0 ? (
+          <div className="wl-empty">
+            <h2>Your watchlist is empty!</h2>
+            <Link to="/home" className="btn-explore">Explore Movies</Link>
+          </div>
+        ) : (
+          <div className="wl-grid">
+            {sortedMovies.map((movie) => (
+              <Link to={`/movie/${movie.movie_id}`} key={movie.movie_id} className="wl-card">
+                <img src={movie.poster_url} alt={movie.title} className="wl-poster" />
+                
+                <div className="wl-overlay">
+                  <div className="wl-overlay-content">
+                    <h3 className="wl-title">{movie.title}</h3>
+                    <div className="wl-stars">
+                      {"★".repeat(Math.floor(movie.avg_rating || 0))}
+                      <span className="wl-rating-num">{movie.avg_rating}</span>
+                    </div>
+                    <p className="wl-synopsis">
+                      {movie.overview?.length > 70 ? movie.overview.substring(0, 70) + "..." : movie.overview || "No overview available."}
+                    </p>
+                  </div>
+                  
+                  <div className="wl-actions">
+                    <button className="wl-btn-watched" onClick={(e) => handleMarkWatched(movie.movie_id, e)}>
+                      Mark as Watched ✔
+                    </button>
+                    <button className="wl-btn-remove" onClick={(e) => handleRemove(movie.movie_id, e)}>
+                      Remove 
+                    </button>
+                  </div>
+                </div>
+              </Link>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -30890,7 +32081,7 @@ body {
   letter-spacing: 1px;
 }
 .cal-title span {
-  color: #9b5cff;
+  color: var(--primary-accent);
 }
 
 .cal-btn {
@@ -30906,7 +32097,7 @@ body {
 }
 .cal-btn:hover {
   background: rgba(155, 92, 255, 0.2);
-  border-color: #9b5cff;
+  border-color: var(--primary-accent);
   transform: translateY(-2px);
 }
 
@@ -30974,7 +32165,7 @@ body {
 }
 
 .calendar-cell:hover .date-number {
-  color: #9b5cff;
+  color: var(--primary-accent);
 }
 
 .is-today {
@@ -31608,8 +32799,8 @@ body {
 }
 
 .s-tab.active {
-  color: #9b5cff;
-  border-bottom-color: #9b5cff;
+  color: var(--primary-accent);
+  border-bottom-color: var(--primary-accent);
 }
 
 /* ============================
@@ -31752,7 +32943,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #9b5cff;
+  color: var(--primary-accent);
   font-weight: 800;
   font-size: 30px;
   margin-bottom: 10px;
@@ -31792,7 +32983,7 @@ body {
 
 .sm-tab-btn.active {
   color: #fff;
-  border-color: #9b5cff;
+  border-color: var(--primary-accent);
 }
 
 .sm-user-item {
@@ -31814,7 +33005,7 @@ body {
 .sm-user-avatar {
   width: 38px;
   height: 38px;
-  background: linear-gradient(135deg, #3a1a6e, #9b5cff);
+  background: linear-gradient(135deg, #3a1a6e, var(--primary-accent));
   border-radius: 50%;
   display: flex;
   align-items: center;
@@ -31824,7 +33015,7 @@ body {
 }
 
 .btn-follow-action {
-  background: #9b5cff;
+  background: var(--primary-accent);
   color: #fff;
   border: none;
   padding: 6px 16px;
@@ -32014,7 +33205,7 @@ body {
   display: inline-block;
   margin-top: 20px;
   padding: 12px 30px;
-  background: #9b5cff;
+  background: var(--primary-accent);
   color: #fff;
   text-decoration: none;
   border-radius: 25px;
@@ -32024,144 +33215,6 @@ body {
 
 <file path="README.md">
 # movie-recommendation-system-letterbox
-</file>
-
-<file path="requirements.txt">
-altair==6.0.0
-attrs==24.2.0
-audioop-lts==0.2.2
-bcrypt==4.3.0
-beautifulsoup4==4.12.3
-blinker==1.8.2
-cachetools==6.2.4
-certifi==2024.8.30
-cffi==1.17.1
-charset-normalizer==3.4.0
-click==8.1.7
-colorama==0.4.6
-comtypes==1.4.12
-contourpy==1.3.3
-cycler==0.12.1
-distlib==0.4.0
-dotenv==0.9.9
-fastjsonschema==2.21.2
-filelock==3.19.1
-Flask==3.0.3
-Flask-Cors==5.0.0
-fonttools==4.61.1
-fsspec==2026.4.0
-gitdb==4.0.12
-GitPython==3.1.46
-greenlet==3.5.4
-h11==0.14.0
-idna==3.10
-itsdangerous==2.2.0
-Jinja2==3.1.4
-joblib==1.5.3
-jsonschema==4.26.0
-jsonschema-specifications==2025.9.1
-jupyterlab_widgets==3.0.16
-kiwisolver==1.4.9
-lark==1.3.1
-llvmlite==0.47.0
-MarkupSafe==3.0.2
-matplotlib==3.10.8
-mistune==3.3.2
-more-itertools==11.0.2
-mpmath==1.3.0
-mysql-connector-python==9.7.0
-narwhals==2.15.0
-nest-asyncio2==1.7.2
-networkx==3.6.1
-numba==0.65.1
-numpy==2.1.3
-openai-whisper==20250625
-outcome==1.3.0.post0
-packaging==24.1
-pandas==2.2.3
-pandocfilters==1.5.1
-parso==0.8.7
-pillow==12.1.0
-platformdirs==4.4.0
-plotly==5.24.1
-pocketsphinx==5.0.4
-prometheus_client==0.25.0
-protobuf==6.33.3
-psutil==7.2.2
-pure_eval==0.2.3
-pyarrow==22.0.0
-PyAudio==0.2.14
-pycparser==2.22
-pydeck==0.9.1
-Pygments==2.20.0
-PyJWT==2.13.0
-pyparsing==3.3.2
-pypiwin32==223
-PyQt5==5.15.11
-PyQt5-Qt5==5.15.2
-PyQt5_sip==12.17.0
-PySocks==1.7.1
-python-dateutil==2.9.0.post0
-python-dotenv==1.2.1
-python-json-logger==4.1.0
-pyttsx3==2.99
-pytz==2024.2
-pywin32==311
-pywinpty==3.0.5
-PyYAML==6.0.3
-pyzmq==27.1.0
-RapidFuzz==3.14.5
-referencing==0.37.0
-regex==2026.5.9
-requests==2.32.3
-rfc3339-validator==0.1.4
-rfc3986-validator==0.1.1
-rpds-py==0.30.0
-scikit-learn==1.8.0
-scipy==1.17.0
-seaborn==0.13.2
-selenium==4.26.1
-Send2Trash==2.1.0
-setuptools==81.0.0
-six==1.16.0
-smmap==5.0.2
-sniffio==1.3.1
-sortedcontainers==2.4.0
-sounddevice==0.5.2
-soupsieve==2.6
-SpeechRecognition==3.14.3
-SQLAlchemy==2.0.51
-standard-aifc==3.13.0
-standard-chunk==3.13.0
-streamlit==1.52.2
-sympy==1.14.0
-tenacity==9.0.0
-threadpoolctl==3.6.0
-tiktoken==0.12.0
-tinycss2==1.5.1
-toml==0.10.2
-torch==2.11.0
-tornado==6.5.4
-tqdm==4.67.3
-traitlets==5.15.1
-trio==0.27.0
-trio-websocket==0.11.1
-typing_extensions==4.15.0
-tzdata==2024.2
-unicorn==2.1.4
-uri-template==1.3.0
-urllib3==2.2.3
-uvicorn==0.41.0
-vaderSentiment==3.3.2
-virtualenv==20.34.0
-watchdog==6.0.0
-wcwidth==0.8.1
-webcolors==25.10.0
-webencodings==0.5.1
-websocket-client==1.8.0
-Werkzeug==3.1.2
-widgetsnbextension==4.0.15
-wsproto==1.2.0
 </file>
 
 <file path=".gitignore">
@@ -32214,32 +33267,55 @@ __pycache__/
 .env
 </file>
 
-<file path="backend/routes/home.py">
-import random
-from flask import Blueprint, jsonify, g, request
-from sqlalchemy import text, bindparam
-from backend.database import engine
-from backend.middleware.auth_middleware import token_required
-from datetime import datetime
-from dotenv import load_dotenv
+<file path="backend/config.py">
+# File Path: backend/config.py
 import os
-import requests
+from dotenv import load_dotenv
 
-# 🌟 Load environment variables at the very top
 load_dotenv()
 
+HOST = os.getenv("DB_HOST", "localhost")
+USER = os.getenv("DB_USER", "root")
+PASSWORD = os.getenv("DB_PASSWORD")
+DATABASE = os.getenv("DB_NAME", "movieverse_db")
 
-# 🌟 Single Blueprint Declaration for all home and trailer routes
+JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY")
+
+if not JWT_SECRET_KEY:
+    raise RuntimeError("CRITICAL: JWT_SECRET_KEY is missing in .env file! App cannot start securely.")
+
+CORS_ORIGINS = [
+    "http://localhost:5173", 
+    "http://127.0.0.1:5173"
+]
+</file>
+
+<file path="backend/routes/home.py">
+# File Path: backend/routes/home.py
+import os
+import random
+import requests
+from flask import Blueprint, jsonify, g, request, current_app
+from sqlalchemy import text, bindparam
+from dotenv import load_dotenv
+
+from cachetools import TTLCache # 🚀 FIX N8: Import Cache
+from backend.database import engine
+from backend.middleware.auth_middleware import token_required
+from backend.extensions import limiter # 🚀 FIX N8: Import Limiter
+
+load_dotenv()
+
 home_bp = Blueprint("home", __name__)
 
-# =====================================================================
-# 🚀 DYNAMIC HELPER FUNCTIONS (SMART SHUFFLING + HIDE RATED MOVIES)
-# =====================================================================
+# 🚀 FIX N8: Bounded cache (Max 1000 searches, items expire after 24 hours/86400 seconds)
+_trailer_cache = TTLCache(maxsize=1000, ttl=86400)
+
 
 def get_dynamic_new_releases(genre_ids_tuple, user_id):
     if not genre_ids_tuple:
         return []
-    
+
     with engine.connect() as conn:
         new_query = text("""
             SELECT * FROM (
@@ -32247,8 +33323,7 @@ def get_dynamic_new_releases(genre_ids_tuple, user_id):
                 FROM movies m
                 WHERE (m.avg_rating >= 3.0 OR m.avg_rating = 0 OR m.avg_rating IS NULL)
                   AND m.poster_url IS NOT NULL
-                  /* Yahan strictly 2024 aur 2025 ki range lock kar di */
-                  AND m.release_year BETWEEN 2024 AND 2025
+                  AND m.release_year BETWEEN (YEAR(CURDATE()) - 2) AND YEAR(CURDATE())
                   AND m.movie_id NOT IN (SELECT movie_id FROM reviews WHERE user_id = :uid)
                   AND EXISTS (
                       SELECT 1 FROM movie_genres mg
@@ -32260,11 +33335,12 @@ def get_dynamic_new_releases(genre_ids_tuple, user_id):
             ORDER BY RAND() 
             LIMIT 15
         """).bindparams(bindparam("gids", expanding=True))
-        
+
         return [dict(row) for row in conn.execute(new_query, {
-            "gids": genre_ids_tuple, 
+            "gids": genre_ids_tuple,
             "uid": user_id
         }).mappings().all()]
+
 
 def get_dynamic_top_rated(user_id):
     with engine.connect() as conn:
@@ -32283,6 +33359,7 @@ def get_dynamic_top_rated(user_id):
             LIMIT 15
         """)
         return [dict(row) for row in conn.execute(top_query, {"uid": user_id}).mappings().all()]
+
 
 def get_dynamic_recommended(genre_ids_tuple, user_id):
     if not genre_ids_tuple:
@@ -32308,6 +33385,7 @@ def get_dynamic_recommended(genre_ids_tuple, user_id):
         """).bindparams(bindparam("gids", expanding=True))
         return [dict(row) for row in conn.execute(rec_query, {"gids": genre_ids_tuple, "uid": user_id}).mappings().all()]
 
+
 def get_dynamic_genre_movies(gid, user_id):
     with engine.connect() as conn:
         sec_query = text("""
@@ -32330,9 +33408,6 @@ def get_dynamic_genre_movies(gid, user_id):
         """)
         return [dict(row) for row in conn.execute(sec_query, {"gid": gid, "uid": user_id}).mappings().all()]
 
-# =====================================================================
-# 🏠 MAIN HOME ROUTE
-# =====================================================================
 
 @home_bp.route("/home", methods=["GET"])
 @token_required
@@ -32363,13 +33438,12 @@ def home():
                 FROM genres 
                 WHERE genre_name IN :genres
             """).bindparams(bindparam("genres", expanding=True))
-            
+
             genre_rows = conn.execute(genre_query, {"genres": selected_genres_db}).mappings().all()
-            genre_id_map = {row['genre_name']: row['genre_id'] for row in genre_rows}
+            genre_id_map = {row["genre_name"]: row["genre_id"] for row in genre_rows}
             genre_ids = list(genre_id_map.values())
             genre_ids_tuple = tuple(sorted(genre_ids))
-            
-            # 🔥 Pass user_id to all helper functions to filter out rated movies
+
             new_releases = get_dynamic_new_releases(genre_ids_tuple, user_id)
             top_rated = get_dynamic_top_rated(user_id)
             recommended = get_dynamic_recommended(genre_ids_tuple, user_id)
@@ -32383,11 +33457,11 @@ def home():
                 display_name = "Sci-Fi" if genre_name == "Science Fiction" else genre_name
                 genre_sections.append({"genre": display_name, "movies": sec_movies})
 
-            featured_movies = new_releases[:5] if new_releases else []
+            featured_movies = new_releases[:5] if new_releases else top_rated[:5]
 
             dynamic_genre_name = random.choice(selected_genres_db) if selected_genres_db else None
             because_you_love = []
-            
+
             if dynamic_genre_name:
                 dyn_gid = genre_id_map.get(dynamic_genre_name)
                 if dyn_gid:
@@ -32416,15 +33490,17 @@ def home():
                     SELECT m.movie_id, m.title, m.release_year, m.overview, m.avg_rating, m.poster_url
                     FROM movies m
                     WHERE m.poster_url IS NOT NULL
+                      AND m.avg_rating BETWEEN 3.75 AND 4.25
+                      AND m.release_year BETWEEN 1980 AND (YEAR(CURDATE()) - 1)
                       AND m.movie_id NOT IN (SELECT movie_id FROM reviews WHERE user_id = :uid)
-                    ORDER BY avg_rating DESC
-                    LIMIT 40
+                    ORDER BY m.avg_rating DESC
+                    LIMIT 60
                 ) AS top_gems
                 ORDER BY RAND()
                 LIMIT 15
             """)
             hidden_gems = [dict(row) for row in conn.execute(hidden_gems_query, {"uid": user_id}).mappings().all()]
-            
+
         return jsonify({
             "user_id": user_id,
             "selected_genres": selected_genres,
@@ -32439,29 +33515,34 @@ def home():
         }), 200
 
     except Exception as e:
-        print("HOME API ERROR:", e)
-        return jsonify({"error": "Failed to load home data", "details": str(e)}), 500
+        current_app.logger.error(f"HOME API ERROR: {e}")
+        return jsonify({"error": "Failed to load home data"}), 500
 
 
 # =====================================================================
-# 🎬 YOUTUBE TRAILER ROUTE (FINAL FIX - BINA .ENV KE)
+# 🎬 YOUTUBE TRAILER ROUTE (FIX N8: Bounded cache + Auth + Limiter)
 # =====================================================================
-
 @home_bp.route("/movie/trailer", methods=["GET"])
+@token_required
+@limiter.limit("20 per minute")
 def get_movie_trailer():
-    movie_title = request.args.get("title")
-    release_year = request.args.get("year", "")
-    print(f"🎬 Trailer requested for: {movie_title} ({release_year})") 
-
-    # 🔥 Yahan "AIzaSy..." ki jagah APNI ASLI YOUTUBE API KEY daal de!
-    API_KEY = os.getenv("YOUTUBE_API_KEY")
+    movie_title = (request.args.get("title") or "").strip()
+    release_year = (request.args.get("year") or "").strip()
 
     if not movie_title:
         return jsonify({"error": "Movie title is required"}), 400
 
-    search_query = f"{movie_title} {release_year} official trailer"
+    cache_key = (movie_title.lower(), release_year)
+    if cache_key in _trailer_cache:
+        return jsonify({"videoId": _trailer_cache[cache_key]}), 200
+
+    API_KEY = os.getenv("YOUTUBE_API_KEY")
+    if not API_KEY:
+        return jsonify({"error": "YouTube API key not configured"}), 503
+
+    search_query = f"{movie_title} {release_year} official trailer".strip()
     youtube_url = "https://www.googleapis.com/youtube/v3/search"
-    
+
     params = {
         "part": "snippet",
         "q": search_query,
@@ -32471,150 +33552,68 @@ def get_movie_trailer():
     }
 
     try:
-        # YouTube ko request ja rahi hai
-        response = requests.get(youtube_url, params=params)
+        response = requests.get(youtube_url, params=params, timeout=5)
         data = response.json()
-
-        # Ab terminal mein real status code print hoga (200, 403, ya 400)
-        print("YouTube API Status:", response.status_code)
 
         if "items" in data and len(data["items"]) > 0:
             video_id = data["items"][0]["id"]["videoId"]
+            _trailer_cache[cache_key] = video_id
             return jsonify({"videoId": video_id}), 200
         else:
-            # Agar key galat hui ya API enable nahi hui, toh yahan reason print hoga
-            print("YouTube API Error Details:", data)
             return jsonify({"error": "Trailer not found"}), 404
 
     except Exception as e:
-        print("System Error:", e)
+        current_app.logger.error(f"Trailer Error: {e}")
         return jsonify({"error": "Failed to fetch trailer"}), 500
-
-# =====================================================================
-# 🧭 EXPLORE PAGE API
-# =====================================================================
-@home_bp.route("/explore/movies", methods=["GET"])
-def explore_movies():
-    genre = request.args.get("genre", "All")
-    sort_by = request.args.get("sort_by", "Newest")
-    lang = request.args.get("lang", "All")
-    duration = request.args.get("duration", "All")
-    decade = request.args.get("decade", "All")
-    
-    page = int(request.args.get("page", 1))
-    limit = int(request.args.get("limit", 20))
-    offset = (page - 1) * limit
-
-    current_year = datetime.now().year
-
-    try:
-        with engine.connect() as conn:
-            query_str = """
-                SELECT m.movie_id, m.title, m.release_year, m.avg_rating, m.poster_url
-                FROM movies m
-            """
-            params = {"limit": limit, "offset": offset, "current_year": current_year}
-            
-            if genre and genre != "All":
-                query_str += """
-                JOIN movie_genres mg ON m.movie_id = mg.movie_id
-                JOIN genres g ON mg.genre_id = g.genre_id
-                """
-
-            query_str += " WHERE m.poster_url IS NOT NULL AND m.release_year <= :current_year "
-
-            if genre and genre != "All":
-                # Frontend 'Sci-Fi' bhejta hai, DB me 'Science Fiction' hota hai
-                mapped_genre = "Science Fiction" if genre == "Sci-Fi" else genre
-                
-                # LIKE operator use kiya taaki strictly match ho jaye
-                query_str += " AND g.genre_name LIKE :genre "
-                params["genre"] = f"%{mapped_genre}%"
-
-            if lang != "All":
-                query_str += """
-                AND EXISTS (
-                    SELECT 1 FROM movie_languages ml
-                    JOIN languages l ON ml.language_id = l.language_id
-                    WHERE ml.movie_id = m.movie_id AND l.language_name = :lang
-                )
-                """
-                params["lang"] = lang
-
-            if duration != "All":
-                if duration == "Under 90m":
-                    query_str += " AND m.runtime_minutes < 90 "
-                elif duration == "90-120m":
-                    query_str += " AND m.runtime_minutes BETWEEN 90 AND 120 "
-                elif duration == "120m+":
-                    query_str += " AND m.runtime_minutes > 120 "
-
-            if decade != "All":
-                if decade == "2020s":
-                    query_str += " AND m.release_year >= 2020 "
-                elif decade == "2010s":
-                    query_str += " AND m.release_year BETWEEN 2010 AND 2019 "
-                elif decade == "2000s":
-                    query_str += " AND m.release_year BETWEEN 2000 AND 2009 "
-                elif decade == "Classic":
-                    query_str += " AND m.release_year < 2000 "
-
-            if sort_by == "Newest":
-                query_str += " ORDER BY m.release_year DESC "
-            elif sort_by == "Top Rated":
-                query_str += " ORDER BY m.avg_rating DESC "
-            elif sort_by == "A-Z":
-                query_str += " ORDER BY m.title ASC "
-
-            query_str += " LIMIT :limit OFFSET :offset"
-
-            movies = conn.execute(text(query_str), params).mappings().all()
-
-        return jsonify({
-            "page": page,
-            "movies": [dict(m) for m in movies],
-            "has_more": len(movies) == limit
-        }), 200
-
-    except Exception as e:
-        print("Explore API Error:", e)
-        return jsonify({"error": str(e)}), 500
 
 
 # =====================================================================
 # 💬 REVIEW COMMENTS & REVIEWS API
 # =====================================================================
-@home_bp.route("/reviews/<int:review_id>/comments", methods=["GET", "POST"])
-def review_comments(review_id):
-    if request.method == "GET":
-        with engine.connect() as conn:
-            comments = conn.execute(text("""
-                SELECT rc.comment_id, rc.comment_text, rc.created_at, u.username 
-                FROM review_comments rc
-                JOIN users u ON rc.user_id = u.user_id
-                WHERE rc.review_id = :rid
-                ORDER BY rc.created_at DESC
-            """), {"rid": review_id}).mappings().all()
-        return jsonify([dict(c) for c in comments]), 200
+@home_bp.route("/reviews/<int:review_id>/comments", methods=["GET"])
+def get_review_comments(review_id):
+    with engine.connect() as conn:
+        comments = conn.execute(text("""
+            SELECT rc.comment_id, rc.user_id, rc.comment_text, rc.created_at, u.username 
+            FROM review_comments rc
+            JOIN users u ON rc.user_id = u.user_id
+            WHERE rc.review_id = :rid
+            ORDER BY rc.created_at ASC
+        """), {"rid": review_id}).mappings().all()
+    return jsonify([dict(c) for c in comments]), 200
 
-    elif request.method == "POST":
-        data = request.get_json()
-        user_id = data.get("user_id")
-        comment_text = data.get("comment_text")
 
-        if not user_id or not comment_text:
-            return jsonify({"error": "Missing user_id or comment_text"}), 400
+@home_bp.route("/reviews/<int:review_id>/comments", methods=["POST"])
+@token_required
+def add_review_comment(review_id):
+    user_id = int(g.user_id)
+    data = request.get_json() or {}
+    comment_text = str(data.get("comment_text") or "").strip()
 
-        with engine.begin() as conn:
-            conn.execute(text("""
-                INSERT INTO review_comments (review_id, user_id, comment_text) 
-                VALUES (:rid, :uid, :txt)
-            """), {"rid": review_id, "uid": user_id, "txt": comment_text})
-        
-        return jsonify({"message": "Comment added successfully!"}), 201
+    if not comment_text:
+        return jsonify({"error": "Comment text is required"}), 400
+
+    if len(comment_text) > 500:
+        return jsonify({"error": "Comment cannot exceed 500 characters"}), 400
+
+    with engine.begin() as conn:
+        review_exists = conn.execute(
+            text("SELECT review_id FROM reviews WHERE review_id = :rid"),
+            {"rid": review_id}
+        ).first()
+        if not review_exists:
+            return jsonify({"error": "Review not found"}), 404
+
+        conn.execute(text("""
+            INSERT INTO review_comments (review_id, user_id, comment_text) 
+            VALUES (:rid, :uid, :txt)
+        """), {"rid": review_id, "uid": user_id, "txt": comment_text})
+
+    return jsonify({"message": "Comment added successfully!"}), 201
+
 
 @home_bp.route("/movie/<int:movie_id>/reviews", methods=["GET"])
-def get_reviews(movie_id):
+def get_reviews_for_movie(movie_id):
     with engine.connect() as conn:
         reviews_query = text("""
             SELECT r.review_id, r.user_id, r.review_text, r.rating, r.likes, r.created_at, r.is_spoiler, u.username 
@@ -32625,34 +33624,46 @@ def get_reviews(movie_id):
         """)
         reviews = [dict(row) for row in conn.execute(reviews_query, {"mid": movie_id}).mappings().all()]
 
-        for review in reviews:
+        if reviews:
+            review_ids = tuple(r["review_id"] for r in reviews)
             comments_query = text("""
-                SELECT rc.comment_id, rc.comment_text, rc.created_at, u.username 
+                SELECT rc.comment_id, rc.review_id, rc.user_id, rc.comment_text, rc.created_at, u.username 
                 FROM review_comments rc
                 JOIN users u ON rc.user_id = u.user_id
-                WHERE rc.review_id = :rid
+                WHERE rc.review_id IN :rids
                 ORDER BY rc.created_at ASC
-            """)
-            comments = [dict(c) for c in conn.execute(comments_query, {"rid": review["review_id"]}).mappings().all()]
-            review["comments"] = comments  
+            """).bindparams(bindparam("rids", expanding=True))
+
+            all_comments = conn.execute(comments_query, {"rids": review_ids}).mappings().all()
+            comments_by_review = {}
+            for c in all_comments:
+                comments_by_review.setdefault(c["review_id"], []).append(dict(c))
+
+            for r in reviews:
+                r["comments"] = comments_by_review.get(r["review_id"], [])
 
     return jsonify({"reviews": reviews}), 200
 
+
 @home_bp.route("/comments/<int:comment_id>", methods=["DELETE"])
+@token_required
 def delete_review_comment(comment_id):
-    data = request.get_json() or {}
-    user_id = data.get("user_id")
+    user_id = int(g.user_id)
 
     with engine.begin() as conn:
-        conn.execute(text("""
-            DELETE FROM review_comments WHERE comment_id = :cid
-        """), {"cid": comment_id})
-    
+        result = conn.execute(text("""
+            DELETE FROM review_comments 
+            WHERE comment_id = :cid AND user_id = :uid
+        """), {"cid": comment_id, "uid": user_id})
+
+        if result.rowcount == 0:
+            return jsonify({"error": "Comment not found or unauthorized"}), 403
+
     return jsonify({"message": "Comment deleted successfully!"}), 200
 
 
 # =====================================================================
-# 🎲 SURPRISE ME ROUTE (BULLETPROOF FIX)
+# 🎲 SURPRISE ME ROUTE
 # =====================================================================
 @home_bp.route("/movie/surprise", methods=["GET"])
 @token_required
@@ -32667,7 +33678,6 @@ def get_surprise_movie():
 
             movie = None
 
-            # Agar user ki preference hai
             if preference and preference["favorite_genre"]:
                 selected_genres = [g.strip() for g in preference["favorite_genre"].split(",") if g.strip()]
                 genre_mapping = {"Sci-Fi": "Science Fiction"}
@@ -32686,10 +33696,9 @@ def get_surprise_movie():
                       )
                     ORDER BY RAND() LIMIT 1
                 """).bindparams(bindparam("genres", expanding=True))
-                
+
                 movie = conn.execute(query, {"genres": selected_genres_db}).mappings().first()
 
-            # Agar preference nahi hai, YA FIR preference wali query se koi movie nahi mili (Fallback)
             if not movie:
                 fallback_query = text("""
                     SELECT movie_id, title, poster_url, release_year, avg_rating 
@@ -32701,106 +33710,18 @@ def get_surprise_movie():
                 """)
                 movie = conn.execute(fallback_query).mappings().first()
 
-            # Final Return
             if movie:
                 return jsonify(dict(movie)), 200
             else:
                 return jsonify({"error": "No movie found"}), 404
 
     except Exception as e:
-        print("Surprise Error:", e)
+        current_app.logger.error(f"Surprise Error: {e}")
         return jsonify({"error": "Failed to fetch surprise movie"}), 500
-
-
-# =====================================================================
-# 📩 INBOX & SOCIAL SHARE ROUTES (THE WOW FACTOR)
-# =====================================================================
-
-@home_bp.route("/share/movie", methods=["POST"])
-@token_required
-def share_movie():
-    sender_id = g.user_id
-    data = request.get_json()
-    
-    receiver_username = data.get("username")
-    movie_id = data.get("movie_id")
-    message = data.get("message", "Hey, check out this movie! I think you'll love it.")
-
-    if not receiver_username or not movie_id:
-        return jsonify({"error": "Username and Movie ID are required"}), 400
-
-    try:
-        with engine.begin() as conn:
-            # 1. Pehle check karo ki dost ka username exist karta hai ya nahi
-            receiver = conn.execute(
-                text("SELECT user_id FROM users WHERE username = :uname"), 
-                {"uname": receiver_username}
-            ).mappings().first()
-
-            if not receiver:
-                return jsonify({"error": f"User '@{receiver_username}' not found!"}), 404
-            
-            if receiver["user_id"] == sender_id:
-                return jsonify({"error": "You cannot share a movie with yourself!"}), 400
-
-            # 2. Movie share kar do
-            conn.execute(text("""
-                INSERT INTO shared_movies (sender_id, receiver_id, movie_id, message)
-                VALUES (:sid, :rid, :mid, :msg)
-            """), {
-                "sid": sender_id, 
-                "rid": receiver["user_id"], 
-                "mid": movie_id, 
-                "msg": message
-            })
-        
-        return jsonify({"message": f"Movie shared with @{receiver_username} successfully!"}), 200
-
-    except Exception as e:
-        print("Share Error:", e)
-        return jsonify({"error": "Failed to share movie"}), 500
-
-
-@home_bp.route("/inbox", methods=["GET"])
-@token_required
-def get_inbox():
-    user_id = g.user_id
-    
-    try:
-        with engine.connect() as conn:
-            query = text("""
-                SELECT s.share_id, s.movie_id, s.message, s.created_at, s.is_read,
-                       u.username as sender_name, m.title, m.poster_url
-                FROM shared_movies s
-                JOIN users u ON s.sender_id = u.user_id
-                JOIN movies m ON s.movie_id = m.movie_id
-                WHERE s.receiver_id = :uid
-                ORDER BY s.created_at DESC
-            """)
-            inbox_messages = [dict(row) for row in conn.execute(query, {"uid": user_id}).mappings().all()]
-            
-        return jsonify({"inbox": inbox_messages}), 200
-
-    except Exception as e:
-        print("Inbox Error:", e)
-        return jsonify({"error": "Failed to load inbox"}), 500
-
-
-@home_bp.route("/users", methods=["GET"])
-@token_required
-def get_platform_users():
-    try:
-        with engine.connect() as conn:
-            # Khud ko chhod kar baaki 20 users nikal lo suggestions ke liye
-            query = text("SELECT username FROM users WHERE user_id != :uid LIMIT 20")
-            users = [dict(row) for row in conn.execute(query, {"uid": g.user_id}).mappings().all()]
-        return jsonify({"users": users}), 200
-    except Exception as e:
-        print("Users Fetch Error:", e)
-        return jsonify({"error": "Failed to fetch users"}), 500
 </file>
 
 <file path="backend/routes/profile.py">
+# File Path: backend/routes/profile.py
 from flask import Blueprint, jsonify, request, g
 from sqlalchemy import text
 from datetime import datetime
@@ -32836,20 +33757,23 @@ def get_profile():
 
     return jsonify(dict(user)), 200
 
+# 🚀 N6 FIX: Backend Avatar Validation
 @profile_bp.route("/user/edit", methods=["POST"])
+@token_required
 def edit_profile():
-    data = request.get_json()
-    user_id = data.get("user_id")
+    user_id = g.user_id
+    data = request.get_json() or {}
     new_username = data.get("username")
     new_bio = data.get("bio")
-
-    if not user_id:
-        return jsonify({"error": "User ID is required"}), 400
+    new_avatar = data.get("profile_image")
 
     try:
         with engine.begin() as conn:
             if new_username:
                 new_username = new_username.strip()
+                if not new_username:
+                    return jsonify({"error": "Username cannot be empty"}), 400
+
                 existing = conn.execute(
                     text("SELECT user_id FROM users WHERE username = :uname AND user_id != :uid"),
                     {"uname": new_username, "uid": user_id}
@@ -32868,11 +33792,29 @@ def edit_profile():
                     text("UPDATE users SET bio = :bio WHERE user_id = :uid"),
                     {"bio": new_bio.strip(), "uid": user_id}
                 )
+            
+            if new_avatar is not None:
+                clean_avatar = new_avatar.strip()
+                # 🚀 URL Validation: Must start with http or https, else save as None
+                if clean_avatar and not (clean_avatar.startswith("http://") or clean_avatar.startswith("https://")):
+                    clean_avatar = None
+                elif not clean_avatar:
+                    clean_avatar = None
 
-        return jsonify({"message": "Profile updated successfully"}), 200
+                conn.execute(
+                    text("UPDATE users SET profile_image = :avatar WHERE user_id = :uid"),
+                    {"avatar": clean_avatar, "uid": user_id}
+                )
+
+        return jsonify({
+            "message": "Profile updated successfully",
+            "username": new_username,
+            "bio": new_bio,
+            "profile_image": new_avatar
+        }), 200
     except Exception as e:
         print("EDIT PROFILE ERROR:", str(e))
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Failed to update profile"}), 500
 
 @profile_bp.route("/profile/<int:user_id>/analytics", methods=["GET"])
 def get_user_analytics(user_id):
@@ -32911,10 +33853,10 @@ def get_user_analytics(user_id):
 
     total_minutes = sum([row['runtime_minutes'] or 0 for row in result])
     total_hours = total_minutes // 60
-    avg_rating = round(sum([row['rating'] for row in result]) / len(result), 1) if result else 0
+    avg_rating = round(sum([row['rating'] or 0 for row in result]) / len(result), 1) if result else 0
 
     current_year = datetime.now().year
-    movies_this_year = len([row for row in result if row['created_at'].year == current_year])
+    movies_this_year = len([row for row in result if row['created_at'] and row['created_at'].year == current_year])
 
     all_genres = []
     for row in result:
@@ -32926,7 +33868,7 @@ def get_user_analytics(user_id):
     top_genres = [{"name": g[0], "value": g[1]} for g in top_genres_count]
 
     month_names = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
-    monthly_counts = Counter([row['created_at'].month for row in result])
+    monthly_counts = Counter([row['created_at'].month for row in result if row['created_at']])
     
     monthly_activity = []
     for month_num in range(1, 13): 
@@ -32943,6 +33885,7 @@ def get_user_analytics(user_id):
         "top_genres": top_genres,
         "monthly_activity": monthly_activity[-6:] 
     }), 200
+
 
 social_bp = Blueprint("social", __name__)
 
@@ -32965,36 +33908,7 @@ def search_users():
 
     return jsonify([dict(u) for u in users]), 200
 
-@social_bp.route("/user/<int:target_user_id>/follow", methods=["POST"])
-@token_required
-def follow_user(target_user_id):
-    data = request.get_json()
-    current_user_id = data.get("current_user_id")
-
-    if not current_user_id:
-        return jsonify({"error": "User ID missing"}), 400
-
-    if int(current_user_id) == int(target_user_id):
-        return jsonify({"error": "You cannot follow yourself"}), 400
-
-    with engine.begin() as conn:
-        existing = conn.execute(
-            text("SELECT * FROM followers WHERE follower_id = :cid AND following_id = :tid"),
-            {"cid": int(current_user_id), "tid": target_user_id}
-        ).fetchone()
-
-        if existing:
-            conn.execute(
-                text("DELETE FROM followers WHERE follower_id = :cid AND following_id = :tid"),
-                {"cid": int(current_user_id), "tid": target_user_id}
-            )
-            return jsonify({"status": "unfollowed", "message": "Successfully unfollowed user"}), 200
-        else:
-            conn.execute(
-                text("INSERT INTO followers (follower_id, following_id) VALUES (:cid, :tid)"),
-                {"cid": int(current_user_id), "tid": target_user_id}
-            )
-            return jsonify({"status": "followed", "message": "Successfully followed user"}), 200
+# 🚀 N7 FIX: Puraana 'social_bp' wala "/users/<id>/follow" route ab delete kar diya gaya hai kyunki 'auth_bp' mein updated rate-limited route mojood hai.
 
 @social_bp.route("/user/<int:user_id>/stats", methods=["GET"])
 def get_user_follow_stats(user_id):
@@ -33018,7 +33932,7 @@ def get_user_follow_stats(user_id):
 def get_followers_list(user_id):
     with engine.connect() as conn:
         query = text("""
-            SELECT u.user_id, u.username 
+            SELECT u.user_id, u.username, u.profile_image 
             FROM followers f
             JOIN users u ON f.follower_id = u.user_id
             WHERE f.following_id = :uid
@@ -33030,33 +33944,10 @@ def get_followers_list(user_id):
 def get_following_list(user_id):
     with engine.connect() as conn:
         query = text("""
-            SELECT u.user_id, u.username 
+            SELECT u.user_id, u.username, u.profile_image 
             FROM followers f
             JOIN users u ON f.following_id = u.user_id
             WHERE f.follower_id = :uid
-        """)
-        results = [dict(row) for row in conn.execute(query, {"uid": user_id}).mappings().all()]
-    return jsonify(results), 200
-
-@profile_bp.route("/user/<int:user_id>/reviews", methods=["GET"])
-def get_user_reviews(user_id):
-    with engine.connect() as conn:
-        query = text("""
-            SELECT 
-                r.review_id, 
-                r.movie_id, 
-                r.review_text, 
-                r.rating, 
-                r.likes, 
-                r.created_at,
-                m.title as movie_title, 
-                m.poster_url, 
-                m.release_year,
-                (SELECT COUNT(*) FROM review_comments rc WHERE rc.review_id = r.review_id) as comment_count
-            FROM reviews r
-            JOIN movies m ON r.movie_id = m.movie_id
-            WHERE r.user_id = :uid
-            ORDER BY r.created_at DESC
         """)
         results = [dict(row) for row in conn.execute(query, {"uid": user_id}).mappings().all()]
     return jsonify(results), 200
@@ -33138,6 +34029,35 @@ def search_movies(query, limit=20):
     ]
 
     return result.to_dict(orient="records")
+</file>
+
+<file path="Frontend_react/package.json">
+{
+  "name": "frontend_react",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "lint": "oxlint",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "react-router-dom": "^7.18.2",
+    "recharts": "^3.10.1",
+    "socket.io-client": "^4.8.4"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.4",
+    "oxlint": "^1.75.0",
+    "vite": "^8.2.0"
+  }
+}
 </file>
 
 <file path="Frontend_react/src/components/MovieCard.jsx">
@@ -33638,6 +34558,68 @@ export default function MovieCard({ movie }) {
   letter-spacing: 1px;
   color: #d8b4fe;
 }
+
+/* MOBILE FIXES FOR HOME */
+@media (max-width: 900px) {
+  .hero-banner {
+    padding: 40px 20px;
+    min-height: auto;
+  }
+
+  .hero-container {
+    flex-direction: column-reverse; /* Text on bottom, poster on top */
+    align-items: center;
+    gap: 30px;
+    text-align: center;
+  }
+
+  .hero-content {
+    align-items: center;
+  }
+
+  .hero-title {
+    font-size: 36px;
+  }
+
+  .hero-meta {
+    justify-content: center;
+  }
+
+  .hero-actions {
+    flex-direction: column;
+    width: 100%;
+  }
+
+  .hero-actions .btn-play, 
+  .hero-actions .btn-watchlist {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .hero-poster-box {
+    width: 200px;
+    height: 300px;
+  }
+
+  .home-content {
+    padding: 0 20px 60px 20px;
+  }
+
+  .movie-row {
+    gap: 15px;
+    padding: 10px 5px 30px 5px;
+  }
+  
+  .movie-card {
+    flex: 0 0 160px;
+    width: 160px;
+  }
+
+  .see-more-card {
+    flex: 0 0 160px;
+    height: 240px;
+  }
+}
 </file>
 
 <file path="Frontend_react/src/styles/movieDetail.css">
@@ -33829,7 +34811,7 @@ export default function MovieCard({ movie }) {
   width: 85px;
   height: 85px;
   border-radius: 50%;
-  background: linear-gradient(135deg, #3a1a6e, #9b5cff);
+  background: linear-gradient(135deg, #3a1a6e, var(--primary-accent));
   color: white;
   display: flex;
   align-items: center;
@@ -33916,14 +34898,14 @@ export default function MovieCard({ movie }) {
   resize: vertical;
   font-family: inherit;
 }
-.review-textarea:focus { outline: none; border-color: #9b5cff; }
+.review-textarea:focus { outline: none; border-color: var(--primary-accent); }
 .review-btn-row {
   display: flex;
   justify-content: flex-end;
   margin-top: 15px;
 }
 .btn-submit-review {
-  background: #9b5cff;
+  background: var(--primary-accent);
   color: #fff;
   border: none;
   padding: 10px 25px;
@@ -34023,7 +35005,7 @@ export default function MovieCard({ movie }) {
 .ur-stars { color: #1db954; font-size: 12px;}
 .ur-text { color: #bbb; font-size: 15px; line-height: 1.5; margin: 0;}
 .btn-see-more {
-  background: transparent; color: #9b5cff; border: none; font-size: 15px; font-weight: bold; cursor: pointer; padding: 0;
+  background: transparent; color: var(--primary-accent); border: none; font-size: 15px; font-weight: bold; cursor: pointer; padding: 0;
 }
 .btn-see-more:hover { text-decoration: underline; }
 
@@ -34059,7 +35041,7 @@ export default function MovieCard({ movie }) {
   flex-shrink: 0; width: 170px; height: 250px; display: flex; flex-direction: column; align-items: center; justify-content: center; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.1); border-radius: 10px; cursor: pointer; transition: 0.3s;
 }
 .view-more-card:hover { background: rgba(155, 92, 255, 0.15); }
-.view-more-circle { width: 50px; height: 50px; border-radius: 50%; background: #9b5cff; display: flex; align-items: center; justify-content: center; font-size: 20px; margin-bottom: 10px;}
+.view-more-circle { width: 50px; height: 50px; border-radius: 50%; background: var(--primary-accent); display: flex; align-items: center; justify-content: center; font-size: 20px; margin-bottom: 10px;}
 
 .review-actions {
   margin-top: 15px;
@@ -34161,7 +35143,7 @@ export default function MovieCard({ movie }) {
 }
 
 .add-plus-btn {
-  background: #9b5cff;
+  background: var(--primary-accent);
   color: #fff;
   border: none;
   width: 26px;
@@ -34187,8 +35169,8 @@ export default function MovieCard({ movie }) {
   transition: 0.2s;
 }
 .btn-create-toggle:hover { 
-  border-color: #9b5cff; 
-  color: #9b5cff; 
+  border-color: var(--primary-accent); 
+  color: var(--primary-accent); 
 }
 
 .quick-create-form input {
@@ -34203,7 +35185,7 @@ export default function MovieCard({ movie }) {
   font-family: inherit;
 }
 .quick-create-form input:focus {
-  border-color: #9b5cff;
+  border-color: var(--primary-accent);
 }
 
 .qc-actions {
@@ -34456,30 +35438,56 @@ export default function MovieCard({ movie }) {
 }
 </file>
 
+<file path="requirements.txt">
+Flask==3.0.0
+Flask-Cors==4.0.0
+Flask-Mail==0.9.1
+Flask-SocketIO==5.3.6
+SQLAlchemy==2.0.23
+mysql-connector-python==8.2.0
+bcrypt==4.1.1
+PyJWT==2.8.0
+python-dotenv==1.0.0
+pandas==2.1.3
+numpy==1.26.2
+scikit-learn==1.3.2
+joblib==1.3.2
+RapidFuzz==3.5.2
+requests>=2.31.0
+Flask-Limiter>=3.5.0
+pymysql>=1.1.0
+cryptography>=41.0.0
+</file>
+
 <file path="backend/routes/movie.py">
-from flask import Blueprint, jsonify, request
-from sqlalchemy import text
+# File Path: backend/routes/movie.py
+from flask import Blueprint, jsonify, request, current_app
+from sqlalchemy import text, bindparam
 from backend.database import engine
 from backend.services.recommender import recommend
 
-
 movie_bp = Blueprint("movie", __name__)
+
+
+def escape_like(val: str) -> str:
+    return val.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
 
 @movie_bp.route("/movie/<int:movie_id>", methods=["GET"])
 def get_movie_detail(movie_id):
     try:
         with engine.connect() as conn:
-            # 1. Fetch Basic Movie Info (FIXED: Main movie fetch without recommendation filters)
+            # 1. Fetch Basic Movie Info
             movie_query = text("""
                 SELECT movie_id, title, release_year, runtime_minutes, overview, avg_rating, poster_url 
                 FROM movies 
                 WHERE movie_id = :movie_id
             """)
             movie = conn.execute(movie_query, {"movie_id": movie_id}).mappings().first()
-            
+
             if not movie:
                 return jsonify({"error": "Movie not found"}), 404
-                
+
             movie_dict = dict(movie)
 
             # 2. Fetch Genres
@@ -34489,17 +35497,27 @@ def get_movie_detail(movie_id):
                 JOIN movie_genres mg ON g.genre_id = mg.genre_id
                 WHERE mg.movie_id = :movie_id
             """)
-            movie_dict['genres'] = [row['genre_name'] for row in conn.execute(genre_query, {"movie_id": movie_id}).mappings().all()]
+            movie_dict["genres"] = [
+                row["genre_name"]
+                for row in conn.execute(genre_query, {"movie_id": movie_id}).mappings().all()
+            ]
 
-            # 3. Fetch Cast
+            # 3. Fetch Cast (Including role if available)
             cast_query = text("""
-                SELECT a.actor_id, a.actor_name
+                SELECT a.actor_id, a.actor_name, ma.role
                 FROM actors a
                 JOIN movie_actors ma ON a.actor_id = ma.actor_id
                 WHERE ma.movie_id = :movie_id
                 LIMIT 8
             """)
-            movie_dict['cast'] = [{"id": row['actor_id'], "name": row['actor_name'], "role": "Actor"} for row in conn.execute(cast_query, {"movie_id": movie_id}).mappings().all()]
+            movie_dict["cast"] = [
+                {
+                    "id": row["actor_id"],
+                    "name": row["actor_name"],
+                    "role": row["role"] or "Actor"
+                }
+                for row in conn.execute(cast_query, {"movie_id": movie_id}).mappings().all()
+            ]
 
             # 4. Fetch Director
             dir_query = text("""
@@ -34510,43 +35528,67 @@ def get_movie_detail(movie_id):
                 LIMIT 1
             """)
             director = conn.execute(dir_query, {"movie_id": movie_id}).mappings().first()
-            movie_dict['director'] = director['director_name'] if director else "Unknown"
+            movie_dict["director"] = director["director_name"] if director else "Unknown"
 
-            # ----------------------------------------------------
-            # 5. MORE LIKE THIS (ML + SQL FALLBACK)
-            # ----------------------------------------------------
+            # 🚀 FIX #36: Real star rating counts from DB (reviews + standalone ratings)
+            rating_rows = conn.execute(text("""
+                SELECT ROUND(rating) AS star_bucket, COUNT(*) AS cnt
+                FROM (
+                    SELECT user_id, rating FROM reviews WHERE movie_id = :movie_id AND rating > 0
+                    UNION ALL
+                    SELECT r.user_id, r.rating FROM ratings r
+                    WHERE r.movie_id = :movie_id AND r.rating > 0
+                      AND NOT EXISTS (
+                          SELECT 1 FROM reviews rev WHERE rev.movie_id = r.movie_id AND rev.user_id = r.user_id
+                      )
+                ) AS combined_ratings
+                GROUP BY ROUND(rating)
+            """), {"movie_id": movie_id}).mappings().all()
+
+            rating_counts = {str(star): 0 for star in range(1, 6)}
+            for r_row in rating_rows:
+                bucket = int(r_row["star_bucket"] or 0)
+                if 1 <= bucket <= 5:
+                    rating_counts[str(bucket)] = int(r_row["cnt"])
+            movie_dict["rating_counts"] = rating_counts
+
+            # 5. MORE LIKE THIS (ML by movie_id + SQL Fallback)
             similar_movies = []
-            
-            # A. Try fetching recommendations from YOUR ML Model using Movie Title
-            ml_df = recommend(movie_dict['title'], start=0, limit=15)
-            
+
+            # 🚀 P3 FIX #26: Pass both title and movie_id so remakes don't collide
+            ml_df = recommend(movie_dict["title"], start=0, limit=15, movie_id=movie_id)
+
             if ml_df is not None and not ml_df.empty:
-                print(f"🎯 ML Recommendations triggered for {movie_dict['title']}")
-                ml_ids = ml_df['movie_id'].tolist()
-                
+                ml_ids = [int(x) for x in ml_df["movie_id"].tolist() if int(x) != int(movie_id)]
+
                 if ml_ids:
-                    # ML model se aayi IDs ko SQL mein daal kar kachra (0 rating, bad posters) filter out karna
-                    format_strings = ','.join(map(str, ml_ids))
-                    valid_recs_query = text(f"""
+                    # 🚀 P2 FIX #24: Parameterized expanding bindparam instead of f-string
+                    valid_recs_query = text("""
                         SELECT movie_id, title, poster_url, avg_rating
                         FROM movies
-                        WHERE movie_id IN ({format_strings})
-                        AND movie_id != :movie_id
-                        AND release_year <= YEAR(CURDATE())  -- Future movies hata dega
-                        AND avg_rating > 0                   -- 0 rating wali hata dega
-                        AND poster_url IS NOT NULL           -- Tute hue posters hata dega
-                        AND poster_url != ''
-                    """)
-                    
-                    valid_recs = [dict(row) for row in conn.execute(valid_recs_query, {"movie_id": movie_id}).mappings().all()]
-                    
-                    # ML ne jis order mein movies di thi, wahi ranking order maintain karna
-                    valid_recs_dict = {rec['movie_id']: rec for rec in valid_recs}
-                    similar_movies = [valid_recs_dict[ml_id] for ml_id in ml_ids if ml_id in valid_recs_dict]
-                
-            # B. If ML returns nothing OR saari ML movies filter out ho gayi, Fallback to SQL
-            if not similar_movies and movie_dict['genres']:
-                print(f"⚠️ ML failed or filtered out, falling back to SQL for {movie_dict['title']}")
+                        WHERE movie_id IN :ml_ids
+                          AND movie_id != :movie_id
+                          AND release_year <= YEAR(CURDATE())
+                          AND avg_rating > 0
+                          AND poster_url IS NOT NULL
+                          AND poster_url != ''
+                    """).bindparams(bindparam("ml_ids", expanding=True))
+
+                    valid_recs = [
+                        dict(row)
+                        for row in conn.execute(
+                            valid_recs_query,
+                            {"ml_ids": tuple(ml_ids), "movie_id": movie_id}
+                        ).mappings().all()
+                    ]
+
+                    valid_recs_dict = {rec["movie_id"]: rec for rec in valid_recs}
+                    similar_movies = [
+                        valid_recs_dict[ml_id] for ml_id in ml_ids if ml_id in valid_recs_dict
+                    ]
+
+            # Fallback to SQL Genre Matching if ML unavailable or filtered out
+            if not similar_movies and movie_dict["genres"]:
                 sim_query = text("""
                     SELECT m.movie_id, m.title, m.poster_url, m.avg_rating, COUNT(mg.genre_id) as shared_genres
                     FROM movies m
@@ -34555,41 +35597,46 @@ def get_movie_detail(movie_id):
                         SELECT genre_id FROM movie_genres WHERE movie_id = :movie_id
                     )
                     AND m.movie_id != :movie_id
-                    AND m.release_year <= YEAR(CURDATE())  -- Strict Filter
-                    AND m.avg_rating > 0                   -- Strict Filter
-                    AND m.poster_url IS NOT NULL           -- Strict Filter
+                    AND m.release_year <= YEAR(CURDATE())
+                    AND m.avg_rating > 0
+                    AND m.poster_url IS NOT NULL
                     AND m.poster_url != ''
                     GROUP BY m.movie_id, m.title, m.poster_url, m.avg_rating, m.release_year
                     ORDER BY shared_genres DESC, m.avg_rating DESC
                     LIMIT 8
                 """)
-                similar_movies = [dict(row) for row in conn.execute(sim_query, {"movie_id": movie_id}).mappings().all()]
-            
-            movie_dict['recommendations'] = similar_movies
+                similar_movies = [
+                    dict(row)
+                    for row in conn.execute(sim_query, {"movie_id": movie_id}).mappings().all()
+                ]
+
+            movie_dict["recommendations"] = similar_movies
 
         return jsonify(movie_dict), 200
 
     except Exception as e:
-        print("MOVIE DETAIL API ERROR:", e)
-        return jsonify({"error": str(e)}), 500
+        current_app.logger.error(f"MOVIE DETAIL API ERROR: {e}")
+        # 🚀 P2 FIX #19: Generic error message instead of leaking str(e)
+        return jsonify({"error": "Failed to fetch movie details"}), 500
 
 
 @movie_bp.route("/actor/<string:actor_name>", methods=["GET"])
 def get_actor_movies(actor_name):
-    # 'as Barbie' ya extra text hataane ke liye sirf main naam le lo
     clean_actor_name = actor_name.split(" as ")[0].strip()
 
-    # 🌟 NAYA: URL parameters se page aur sort method nikalna
-    page = request.args.get('page', 1, type=int)
-    sort_by = request.args.get('sort_by', 'year') # Default sort 'year' hoga
-    
+    # 🚀 P1 FIX #17: Prevent page < 1 negative offset crash
+    raw_page = request.args.get("page", 1, type=int)
+    page = max(1, raw_page if raw_page is not None else 1)
+    sort_by = request.args.get("sort_by", "year")
+
     limit = 20
     offset = (page - 1) * limit
 
-    # Sorting Logic
     order_clause = "ORDER BY m.release_year DESC"
-    if sort_by == 'rating':
+    if sort_by == "rating":
         order_clause = "ORDER BY m.avg_rating DESC, m.release_year DESC"
+
+    escaped_actor = escape_like(clean_actor_name)
 
     with engine.connect() as conn:
         query = text(f"""
@@ -34597,15 +35644,15 @@ def get_actor_movies(actor_name):
             FROM movies m
             JOIN movie_actors ma ON m.movie_id = ma.movie_id
             JOIN actors a ON ma.actor_id = a.actor_id
-            WHERE a.actor_name LIKE :actor
-            AND m.poster_url IS NOT NULL 
-            AND m.poster_url != ''
+            WHERE a.actor_name LIKE :actor ESCAPE '\\\\'
+              AND m.poster_url IS NOT NULL 
+              AND m.poster_url != ''
             {order_clause}
             LIMIT :limit OFFSET :offset
         """)
-        
+
         movies = conn.execute(query, {
-            "actor": f"%{clean_actor_name}%",
+            "actor": f"%{escaped_actor}%",
             "limit": limit,
             "offset": offset
         }).mappings().all()
@@ -34613,529 +35660,16 @@ def get_actor_movies(actor_name):
     return jsonify([dict(m) for m in movies]), 200
 </file>
 
-<file path="backend/services/recommender.py">
-import os
-import joblib
-import threading # 🚀 Yeh naya import hai
-
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-MODELS_DIR = os.path.join(BASE_DIR, "models")
-
-# Global variables
-movies = None
-movie_index = None
-tfidf_matrix = None
-knn = None
-
-# 🚀 Yeh taala (lock) hai jo multiple loading rokega
-model_lock = threading.Lock() 
-
-def load_recommender_models():
-    global movies, movie_index, tfidf_matrix, knn
-    
-    # Pehle normal check (Fast response ke liye)
-    if movies is None:
-        # 🚀 Taala laga do! Ab ek baar mein ek hi request andar jayegi
-        with model_lock:
-            # Taale ke andar dubara check karo (Double-checked locking)
-            if movies is None:
-                print("⏳ Loading ML Recommendation Models... (First user will wait 30s)")
-                movies = joblib.load(os.path.join(MODELS_DIR, "movies.pkl"))
-                movie_index = joblib.load(os.path.join(MODELS_DIR, "movie_index.pkl"))
-                tfidf_matrix = joblib.load(os.path.join(MODELS_DIR, "tfidf_matrix.pkl"))
-                knn = joblib.load(os.path.join(MODELS_DIR, "recommendation_model.pkl"))
-                print("✅ ML Recommendation Models Loaded Exactly ONCE!")
-
-def recommend(movie_name, start=0, limit=20):
-    global movies, movie_index, tfidf_matrix, knn
-
-    # Function call hote hi pehle ensure karo ki models loaded hain
-    load_recommender_models()
-
-    movie_name = movie_name.lower()
-
-    if not movie_name:
-        return None
-
-    if movie_name not in movie_index:
-        return None
-
-    idx = movie_index[movie_name]
-
-    distances, indices = knn.kneighbors(
-        tfidf_matrix[idx],
-        n_neighbors=start + limit + 1
-    )
-
-    indices = indices[0][1:]
-    distances = distances[0][1:]
-
-    recommendations = movies.iloc[indices].copy()
-    recommendations["similarity"] = 1 - distances
-
-    return recommendations.iloc[start:start+limit][
-        [
-            "movie_id",
-            "title",
-            "release_year",
-            "avg_rating",
-            "genres",
-            "similarity",
-            "poster_url"
-        ]
-    ].fillna(0)
-</file>
-
-<file path="Frontend_react/src/App.jsx">
-import React from "react";
-import Signup from "./pages/Signup";
-import GenreSelection from "./pages/GenreSelection";
-import Home from "./pages/home";
-import MovieDetail from './pages/MovieDetail';
-import Profile from './pages/profile';
-import MonthlyReview from './pages/MonthlyReview';
-import Watchlist from './pages/Watchlist';
-import ActorProfile from "./pages/ActorProfile";
-import ExploreMovies from "./pages/ExploreMovies";
-import Chat from "./components/Chat";
-
-import {
-  BrowserRouter,
-  Routes,
-  Route
-} from "react-router-dom";
-
-import Login from "./pages/login";
-
-
-function App() {
-
-  return (
-
-    <BrowserRouter>
-
-      <Routes>
-
-        <Route
-          path="/"
-          element={<Login />}
-        />
-
-        <Route
-          path="/login"
-          element={<Login />}
-        />
-
-        <Route path="/signup" element={<Signup />} />
-
-        <Route path="/genres" element={<GenreSelection />} />
-
-        <Route
-          path="/home"
-          element={<Home />}
-        />
-
-        <Route path="/movie" element={<MovieDetail />} />
-        <Route path="/movie/:id" element={<MovieDetail />} />
-        <Route path="/profile/:id" element={<Profile />} />
-        <Route path="/monthly-review" element={<MonthlyReview />} />
-        <Route path="/watchlist" element={<Watchlist />} />
-        <Route path="/actor/:actorName" element={<ActorProfile />} />
-        <Route path="/explore" element={<ExploreMovies />} />
-        <Route path="/messages" element={<Chat />} />
-        
-
-      </Routes>
-
-    </BrowserRouter>
-
-  );
-
-}
-
-export default App;
-</file>
-
-<file path="Frontend_react/src/components/Navbar.jsx">
-import React, { useState, useEffect, useRef } from "react";
-import { Link, useNavigate } from "react-router-dom";
-import "../styles/navbar.css"; 
-
-export default function Navbar({ onOpenSearch }) {
-  const navigate = useNavigate();
-  const userId = localStorage.getItem("user_id");
-  const username = localStorage.getItem("username");
-  const token = localStorage.getItem("token"); 
-  
-  const [showDropdown, setShowDropdown] = useState(false);
-  const dropdownRef = useRef(null);
-
-  const [notifications, setNotifications] = useState([]);
-  const [unreadCount, setUnreadCount] = useState(0);
-  const [showNotifDropdown, setShowNotifDropdown] = useState(false);
-  const notifDropdownRef = useRef(null);
-
-  // 🚀 INBOX STATES (NEW)
-  const [inbox, setInbox] = useState([]);
-  const [showInbox, setShowInbox] = useState(false);
-  const inboxDropdownRef = useRef(null);
-
-  const formatNotifDate = (dateString) => {
-    const date = new Date(dateString);
-    const day = date.getDate();
-    const month = date.toLocaleString('default', { month: 'long' });
-    const suffix = (day % 10 === 1 && day !== 11) ? 'st' :
-                   (day % 10 === 2 && day !== 12) ? 'nd' :
-                   (day % 10 === 3 && day !== 13) ? 'rd' : 'th';
-    return `${day}${suffix} ${month}`;
-  };
-
-  const formatMessage = (msg) => {
-    if (msg.startsWith('@')) {
-      const firstSpace = msg.indexOf(' ');
-      const username = msg.substring(1, firstSpace);
-      const restOfMsg = msg.substring(firstSpace);
-      return <span style={{ color: "#aaa" }}><strong style={{ color: "#fff" }}>{username}</strong>{restOfMsg}</span>;
-    }
-    return <span style={{ color: "#aaa" }}>{msg}</span>;
-  };
-
-  useEffect(() => {
-    const handleClickOutside = (event) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
-        setShowDropdown(false);
-      }
-      if (notifDropdownRef.current && !notifDropdownRef.current.contains(event.target)) {
-        setShowNotifDropdown(false);
-      }
-      // 🚀 INBOX CLICK OUTSIDE LOGIC
-      if (inboxDropdownRef.current && !inboxDropdownRef.current.contains(event.target)) {
-        setShowInbox(false);
-      }
-    };
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, []);
-
-  useEffect(() => {
-    if (userId && token) {
-      fetchNotifications();
-      fetchInbox(); // 🚀 FETCH INBOX ON LOAD
-    }
-  }, [userId, token]);
-
-  const fetchNotifications = async () => {
-    try {
-      const res = await fetch("http://127.0.0.1:5000/notifications", {
-        headers: { 
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}` 
-        }
-      });
-      const data = await res.json();
-      if (res.ok) {
-        setNotifications(data.notifications);
-        setUnreadCount(data.unread_count);
-      }
-    } catch (e) {
-      console.error("Failed to fetch notifications:", e);
-    }
-  };
-
-  // 🚀 FETCH INBOX API FUNCTION
-  const fetchInbox = async () => {
-    try {
-      const res = await fetch("http://127.0.0.1:5000/inbox", {
-        headers: { "Authorization": `Bearer ${token}` }
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setInbox(data.inbox || []);
-      }
-    } catch (e) {
-      console.error("Failed to fetch inbox:", e);
-    }
-  };
-
-  const handleNotifClick = async () => {
-    setShowNotifDropdown(!showNotifDropdown);
-    setShowDropdown(false);
-    setShowInbox(false); // Close other dropdowns
-
-    if (!showNotifDropdown && unreadCount > 0) {
-      setUnreadCount(0); 
-      try {
-        await fetch("http://127.0.0.1:5000/notifications/read", {
-          method: "PUT",
-          headers: { 
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${token}` 
-          }
-        });
-        setNotifications((prev) => prev.map(n => ({ ...n, is_read: 1 })));
-      } catch (e) {
-        console.error("Failed to mark notifications read:", e);
-      }
-    }
-  };
-
-  const handleDeleteNotif = async (e, notifId) => {
-    e.stopPropagation(); 
-    setNotifications((prev) => prev.filter((n) => n.notification_id !== notifId));
-    try {
-      await fetch(`http://127.0.0.1:5000/notifications/${notifId}`, {
-        method: "DELETE",
-        headers: { "Authorization": `Bearer ${token}` }
-      });
-    } catch (error) {
-      console.error("Failed to delete notification:", error);
-    }
-  };
-
-  const handleLogout = () => {
-    localStorage.clear();
-    navigate("/login");
-  };
-
-  return (
-    <nav className="navbar">
-      {/* 🚀 PREMIUM NEXUS LOGO */}
-      <div className="navbar-logo-container">
-        <Link to="/home" className="nexus-logo">NEXUS</Link>
-        <span className="nexus-tagline">| The Cinematic Connection</span>
-      </div>
-
-      {/* Right Navigation Icons */}
-      <div className="header-actions">
-        
-        {/* Explore */}
-        <Link to="/explore" className="nav-item">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"></circle><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"></polygon></svg>
-          <span className="nav-text">Explore</span>
-        </Link>
-
-        {/* Watchlist */}
-        <Link to="/watchlist" className="nav-item">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"></path></svg>
-          <span className="nav-text">Watchlist</span>
-        </Link>
-
-        {/* Search */}
-        <button onClick={onOpenSearch} className="nav-item">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
-          <span className="nav-text">Search</span>
-        </button>
-
-        {/* 📩 INBOX / MESSAGES (NEW) */}
-        <div style={{ position: "relative" }} ref={inboxDropdownRef}>
-          <div onClick={() => {
-            setShowInbox(!showInbox);
-            setShowNotifDropdown(false);
-            setShowDropdown(false);
-          }} className="nav-item">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path><polyline points="22,6 12,13 2,6"></polyline></svg>
-            <span className="nav-text">Inbox</span>
-            {inbox.length > 0 && <span className="notif-dot" style={{ background: "#47b8ff" }}></span>}
-          </div>
-
-          {showInbox && (
-            <div className="custom-dropdown" style={{ 
-              width: "380px", maxHeight: "480px", overflowY: "auto",
-              background: "rgba(18, 18, 22, 0.75)",
-              backdropFilter: "blur(16px)",
-              WebkitBackdropFilter: "blur(16px)",
-              border: "1px solid rgba(255,255,255,0.08)",
-              boxShadow: "0 20px 40px rgba(0,0,0,0.6)"
-            }}>
-              
-              <div style={{ padding: "16px 20px", borderBottom: "1px solid rgba(255,255,255,0.08)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <strong style={{ color: "#fff", fontSize: "16px", letterSpacing: "0.5px" }}>Shared With You</strong>
-              </div>
-
-              {inbox.length === 0 ? (
-                <div style={{ padding: "60px 20px", textAlign: "center", color: "#666", fontSize: "14px" }}>
-                  Your inbox is empty. No movies shared yet.
-                </div>
-              ) : (
-                inbox.map((msg) => (
-                  <Link 
-                    to={`/movie/${msg.movie_id}`} 
-                    key={msg.share_id} 
-                    onClick={() => setShowInbox(false)}
-                    style={{
-                      padding: "16px 20px", 
-                      borderBottom: "1px solid rgba(255,255,255,0.04)",
-                      background: msg.is_read ? "transparent" : "rgba(71, 184, 255, 0.05)",
-                      display: "flex", gap: "14px", alignItems: "center", transition: "0.2s",
-                      textDecoration: "none"
-                    }}
-                    onMouseEnter={(e) => e.currentTarget.style.background = "rgba(255, 255, 255, 0.03)"}
-                    onMouseLeave={(e) => e.currentTarget.style.background = msg.is_read ? "transparent" : "rgba(71, 184, 255, 0.05)"}
-                  >
-                    <img src={msg.poster_url} alt={msg.title} style={{ width: "45px", height: "68px", borderRadius: "6px", objectFit: "cover", boxShadow: "0 4px 10px rgba(0,0,0,0.3)" }} />
-                    <div style={{ flex: 1, paddingRight: "10px" }}>
-                      <p style={{ margin: "0 0 4px 0", fontSize: "12.5px", color: "#47b8ff", fontWeight: "600" }}>
-                        @{msg.sender_name} shared a movie
-                      </p>
-                      <h4 style={{ margin: "0 0 6px 0", fontSize: "15px", color: "#fff" }}>{msg.title}</h4>
-                      <p style={{ margin: 0, fontSize: "13px", color: "#aaa", fontStyle: "italic", lineHeight: "1.4" }}>
-                        "{msg.message}"
-                      </p>
-                    </div>
-                  </Link>
-                ))
-              )}
-            </div>
-          )}
-        </div>
-
-        {/* 🔔 NOTIFICATIONS */}
-        <div style={{ position: "relative" }} ref={notifDropdownRef}>
-          <div onClick={handleNotifClick} className="nav-item">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path><path d="M13.73 21a2 2 0 0 1-3.46 0"></path></svg>
-            <span className="nav-text">Alerts</span>
-            {unreadCount > 0 && <span className="notif-dot"></span>}
-          </div>
-
-          {/* 🔥 NOTIFICATIONS DROPDOWN */}
-          {showNotifDropdown && (
-            <div className="custom-dropdown" style={{ 
-              width: "360px", maxHeight: "480px", overflowY: "auto",
-              background: "rgba(18, 18, 22, 0.75)",
-              backdropFilter: "blur(16px)",
-              WebkitBackdropFilter: "blur(16px)",
-              border: "1px solid rgba(255,255,255,0.08)",
-              boxShadow: "0 20px 40px rgba(0,0,0,0.6)"
-            }}>
-              
-              <div style={{ padding: "16px 20px", borderBottom: "1px solid rgba(255,255,255,0.08)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <strong style={{ color: "#fff", fontSize: "16px", letterSpacing: "0.5px" }}>Notifications</strong>
-              </div>
-
-              {notifications.length === 0 ? (
-                <div style={{ padding: "60px 20px", textAlign: "center", color: "#666", fontSize: "14px" }}>
-                  No new activity.
-                </div>
-              ) : (
-                notifications.map((notif) => (
-                  <div key={notif.notification_id} style={{
-                    padding: "16px 20px", 
-                    borderBottom: "1px solid rgba(255,255,255,0.04)",
-                    background: notif.is_read ? "transparent" : "rgba(255, 255, 255, 0.03)",
-                    display: "flex", gap: "14px", alignItems: "flex-start", transition: "0.2s",
-                    position: "relative"
-                  }}>
-                    
-                    <div style={{ position: "relative" }}>
-                      <div style={{
-                        width: "36px", height: "36px", borderRadius: "50%",
-                        background: "#2a2a35", display: "flex", alignItems: "center", justifyContent: "center",
-                        fontSize: "14px", color: "#fff", fontWeight: "bold"
-                      }}>
-                        {notif.message.startsWith('@') ? notif.message.charAt(1).toUpperCase() : 'M'}
-                      </div>
-                      
-                      <div style={{
-                        position: "absolute", bottom: "-2px", right: "-2px",
-                        background: notif.type === 'like' ? '#ff4757' : notif.type === 'comment' ? '#3742fa' : '#2ed573',
-                        width: "14px", height: "14px", borderRadius: "50%",
-                        display: "flex", alignItems: "center", justifyContent: "center", fontSize: "8px",
-                        border: "2px solid #14141a"
-                      }}>
-                        {notif.type === 'like' ? '❤' : notif.type === 'comment' ? '💬' : '👤'}
-                      </div>
-                    </div>
-                    
-                    <div style={{ flex: 1, paddingRight: "16px" }}>
-                      <p style={{ margin: "0 0 4px 0", fontSize: "14px", lineHeight: "1.4" }}>
-                        {formatMessage(notif.message)}
-                      </p>
-                      <span style={{ fontSize: "12px", color: "#666", fontWeight: "500" }}>
-                        {formatNotifDate(notif.created_at)}
-                      </span>
-                    </div>
-
-                    <button 
-                      onClick={(e) => handleDeleteNotif(e, notif.notification_id)}
-                      style={{
-                        position: "absolute", top: "16px", right: "16px",
-                        background: "transparent", border: "none", color: "#444",
-                        fontSize: "14px", cursor: "pointer", padding: "4px", transition: "0.2s"
-                      }}
-                      onMouseEnter={(e) => e.target.style.color = "#ff4757"}
-                      onMouseLeave={(e) => e.target.style.color = "#444"}
-                      title="Delete"
-                    >
-                      ✕
-                    </button>
-                  </div>
-                ))
-              )}
-            </div>
-          )}
-        </div>
-
-        {/* 👤 PROFILE DROPDOWN */}
-        {userId && (
-          <div style={{ position: "relative" }} ref={dropdownRef}>
-            <div 
-              onClick={() => {
-                setShowDropdown(!showDropdown);
-                setShowNotifDropdown(false);
-                setShowInbox(false); // Close Inbox 
-              }}
-              className="nav-item"
-            >
-              <div className="profile-circle">
-                {username ? username.charAt(0).toUpperCase() : "U"}
-              </div>
-              <span className="nav-text">Profile</span>
-            </div>
-
-            {showDropdown && (
-              <div className="custom-dropdown" style={{ width: "200px" }}>
-                <div style={{ padding: "12px 16px", borderBottom: "1px solid rgba(255,255,255,0.06)", fontSize: "13px", color: "#888" }}>
-                  Signed in as <strong style={{ color: "#fff" }}>@{username || "user"}</strong>
-                </div>
-
-                <Link 
-                  to={`/profile/${userId}`}
-                  onClick={() => setShowDropdown(false)}
-                  className="dropdown-item"
-                >
-                  👤 My Profile
-                </Link>
-
-                <Link 
-                  to={`/monthly-review`}
-                  onClick={() => setShowDropdown(false)}
-                  className="dropdown-item"
-                >
-                  📊 Monthly Analytics
-                </Link>
-
-                <div className="dropdown-divider"></div>
-
-                <button onClick={handleLogout} className="dropdown-item logout-btn">
-                  🚪 Log Out
-                </button>
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-    </nav>
-  );
-}
-</file>
-
 <file path="Frontend_react/src/pages/Home.jsx">
+// File Path: Frontend_react/src/pages/Home.jsx
 import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
+import { API_BASE_URL } from "../config/api"; // 🚀 FIX N4
 import MovieRow from "../components/MovieRow";
 import SearchModal from "../components/SearchModal"; 
 import Navbar from "../components/Navbar";
-import CinematicLoader from "../components/CinematicLoader";
+import { HeroSkeleton, MovieRowSkeleton } from "../components/SkeletonLoader"; 
+import { addToWatchlist } from "../services/homeService";
 import "../styles/home.css";
 
 export default function Home() {
@@ -35160,7 +35694,7 @@ export default function Home() {
     const fetchHomeData = async () => {
       try {
         setLoading(true); 
-        const res = await fetch("http://127.0.0.1:5000/home", {
+        const res = await fetch(`${API_BASE_URL}/home`, { // 🚀 FIX N4
           method: "GET",
           cache: "no-store",
           headers: {
@@ -35174,20 +35708,17 @@ export default function Home() {
           const data = await res.json();
           setHomeData(data);
           
-          // 🚀 JAISE HI HOME PAGE LOAD HO, CHUP-CHAAP BACKGROUND MEIN MODEL LOAD KAR DO
-          fetch("http://127.0.0.1:5000/warmup")
+          fetch(`${API_BASE_URL}/warmup`) // 🚀 FIX N4
             .then(() => console.log("🔥 ML Models Warm-up Complete!"))
             .catch((err) => console.log("Warmup failed", err));
 
         } else {
-          // 🔥 SMART FIX: Agar Token expire ho gaya (401), seedha login par bhejo!
           if (res.status === 401) {
             console.warn("Token expired! Redirecting to login...");
-            localStorage.removeItem("token"); // Purana kachra saaf
-            window.location.href = "/login"; // Seedha login page par dhakka
+            localStorage.removeItem("token"); 
+            window.location.href = "/login"; 
             return;
           }
-          
           const errData = await res.json();
           setError(errData.error || "Failed to fetch data");
         }
@@ -35213,8 +35744,22 @@ export default function Home() {
     }
   }, [homeData]);
 
-  if (loading) return <CinematicLoader />;
-  if (error) return <div className="home-error">Failed to load home: {error}</div>;
+  const handleHeroWatchlist = async (movieId) => {
+    if (!movieId) return;
+    const success = await addToWatchlist(movieId);
+    if (success) {
+      alert("Added to your watchlist successfully! 🔖");
+    } else {
+      alert("Movie is already in your watchlist.");
+    }
+  };
+
+  if (error) return (
+      <div>
+        <Navbar onOpenSearch={() => setIsSearchModalOpen(true)} />
+        <div className="home-error" style={{textAlign:"center", padding:"100px", color:"#ff4757"}}>Failed to load home: {error}</div>
+      </div>
+  );
 
   const featured = homeData?.featured_movies ? homeData.featured_movies[featuredIndex] : null;
 
@@ -35223,74 +35768,89 @@ export default function Home() {
       <Navbar onOpenSearch={() => setIsSearchModalOpen(true)} />
       <SearchModal isOpen={isSearchModalOpen} onClose={() => setIsSearchModalOpen(false)} />
 
-      {featured && (
-        <div className="hero-banner">
-          <div className="hero-bg fade-bg" style={{ backgroundImage: `url(${featured.poster_url})` }}></div>
-          <div className="hero-overlay"></div>
-          <div className="hero-container">
-            <div className="hero-content" key={featured.movie_id}>
-              <div className="hero-badge">🔥 Latest Release</div>
-              <h1 className="hero-title">{featured.title}</h1>
-              <div className="hero-meta">
-                <span className="rating">⭐ {featured.avg_rating || "N/A"}</span>
-                <span className="year">{featured.release_year || "Unknown"}</span>
-                <span className="quality">4K</span>
-              </div>
-              <p className="hero-overview">
-                {featured.overview 
-                  ? (featured.overview.length > 200 ? featured.overview.substring(0, 200) + "..." : featured.overview) 
-                  : "No description available for this movie."}
-              </p>
-              <div className="hero-actions">
-                <Link to={`/movie/${featured.movie_id}`} className="btn-play" style={{ textDecoration: 'none', display: 'inline-block' }}>
-                  <span className="play-icon">▶</span> View Details
+      {loading ? (
+        <>
+          <HeroSkeleton />
+          <MovieRowSkeleton count={5} />
+          <MovieRowSkeleton count={5} />
+          <MovieRowSkeleton count={5} />
+        </>
+      ) : (
+        <>
+          {featured && (
+            <div className="hero-banner">
+              <div className="hero-bg fade-bg" style={{ backgroundImage: `url(${featured.poster_url})` }}></div>
+              <div className="hero-overlay"></div>
+              <div className="hero-container">
+                <div className="hero-content" key={featured.movie_id}>
+                  <div className="hero-badge">🔥 Featured Release</div>
+                  <h1 className="hero-title">{featured.title}</h1>
+                  <div className="hero-meta">
+                    <span className="rating">⭐ {featured.avg_rating ? Number(featured.avg_rating).toFixed(1) : "N/A"}</span>
+                    <span className="year">{featured.release_year || "Unknown"}</span>
+                    <span className="quality">HD</span>
+                  </div>
+                  <p className="hero-overview">
+                    {featured.overview 
+                      ? (featured.overview.length > 200 ? featured.overview.substring(0, 200) + "..." : featured.overview) 
+                      : "No description available for this movie."}
+                  </p>
+                  <div className="hero-actions">
+                    <Link to={`/movie/${featured.movie_id}`} className="btn-play" style={{ textDecoration: 'none', display: 'inline-block' }}>
+                      <span className="play-icon">▶</span> View Details
+                    </Link>
+                    <button className="btn-watchlist" onClick={() => handleHeroWatchlist(featured.movie_id)}>
+                      <span>+</span> Add to Watchlist
+                    </button>
+                  </div>
+                </div>
+                <Link to={`/movie/${featured.movie_id}`} className="hero-poster-box" key={`poster-${featured.movie_id}`}>
+                  <img src={featured.poster_url} alt={featured.title} className="hero-poster-img" />
                 </Link>
-                <button className="btn-watchlist"><span>+</span> Add to Watchlist</button>
               </div>
             </div>
-            <Link to={`/movie/${featured.movie_id}`} className="hero-poster-box" key={`poster-${featured.movie_id}`}>
-              <img src={featured.poster_url} alt={featured.title} className="hero-poster-img" />
-            </Link>
-          </div>
-        </div>
+          )}
+
+          <main className="home-content">
+            {homeData?.because_you_love?.length > 0 && homeData?.dynamic_genre_name && (
+              <MovieRow 
+                title={`BECAUSE YOU LOVE ${homeData.dynamic_genre_name.toUpperCase()}`} 
+                movies={homeData.because_you_love} 
+                seeMoreLink={`/explore?genre=${homeData.dynamic_genre_name}`}
+              />
+            )}
+
+            <MovieRow title="NEW RELEASES" movies={homeData?.new_releases || []} seeMoreLink="/explore?sort_by=Newest" />
+            
+            {homeData?.hidden_gems?.length > 0 && (
+              <MovieRow title="💎 HIDDEN GEMS" movies={homeData.hidden_gems} seeMoreLink="/explore?sort_by=Top Rated" />
+            )}
+
+            <MovieRow title="RECOMMENDED FOR YOU" movies={homeData?.recommended_for_you || []} seeMoreLink="/explore" />
+            
+            <MovieRow title="ALL TIME TOP RATED" movies={homeData?.top_rated || []} seeMoreLink="/explore?sort_by=Top Rated" />
+            
+            {homeData?.genre_sections?.map((section) => (
+              <MovieRow 
+                key={section.genre} 
+                title={`TOP IN ${(section.genre || "").toUpperCase()}`} 
+                movies={section.movies || []} 
+                seeMoreLink={`/explore?genre=${section.genre}`} 
+              />
+            ))}
+          </main>
+        </>
       )}
-
-      <main className="home-content">
-        {homeData?.because_you_love?.length > 0 && homeData?.dynamic_genre_name && (
-          <MovieRow 
-            title={`BECAUSE YOU LOVE ${homeData.dynamic_genre_name.toUpperCase()}`} 
-            movies={homeData.because_you_love} 
-            seeMoreLink={`/explore?genre=${homeData.dynamic_genre_name}`}
-          />
-        )}
-
-        <MovieRow title="NEW RELEASES" movies={homeData?.new_releases || []} seeMoreLink="/explore?sort_by=Newest" />
-        
-        {homeData?.hidden_gems?.length > 0 && (
-          <MovieRow title="💎 HIDDEN GEMS" movies={homeData.hidden_gems} seeMoreLink="/explore?sort_by=Top Rated" />
-        )}
-
-        <MovieRow title="RECOMMENDED FOR YOU" movies={homeData?.recommended_for_you || []} seeMoreLink="/explore" />
-        
-        <MovieRow title="ALL TIME TOP RATED" movies={homeData?.top_rated || []} seeMoreLink="/explore?sort_by=Top Rated" />
-        
-        {homeData?.genre_sections?.map((section) => (
-          <MovieRow 
-            key={section.genre} 
-            title={`TOP IN ${(section.genre || "").toUpperCase()}`} 
-            movies={section.movies || []} 
-            seeMoreLink={`/explore?genre=${section.genre}`} 
-          />
-        ))}
-      </main>
     </div>
   );
 }
 </file>
 
 <file path="Frontend_react/src/pages/login.jsx">
+// File Path: Frontend_react/src/pages/login.jsx
 import React, { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import { API_BASE_URL } from "../config/api";
 import PosterAnimation from "../components/PosterAnimation";
 import "../styles/login.css";
 
@@ -35299,15 +35859,13 @@ export default function Login() {
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [successMsg, setSuccessMsg] = useState(""); // 🌟 NAYA: Login success msg ke liye
+  const [successMsg, setSuccessMsg] = useState("");
 
-  // 🔥 NAYA: Forgot Password States
   const [showForgotModal, setShowForgotModal] = useState(false);
-  const [forgotStep, setForgotStep] = useState(1); // 1 = Email, 2 = OTP + New Password
+  const [forgotStep, setForgotStep] = useState(1);
   const [forgotEmail, setForgotEmail] = useState("");
   const [forgotOtp, setForgotOtp] = useState("");
   const [newPassword, setNewPassword] = useState("");
@@ -35327,7 +35885,7 @@ export default function Login() {
 
     setLoading(true);
     try {
-      const response = await fetch("http://127.0.0.1:5000/login", {
+      const response = await fetch(`${API_BASE_URL}/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, password })
@@ -35336,7 +35894,6 @@ export default function Login() {
       const data = await response.json();
 
       if (!response.ok) {
-        // 🔥 Agar is_verified false hai toh backend 403 bhejega jo yahan error mein aayega
         setError(data.error || "Login failed");
         setLoading(false);
         return;
@@ -35345,27 +35902,29 @@ export default function Login() {
       localStorage.setItem("token", data.token);
       localStorage.setItem("user_id", data.user.user_id);
       localStorage.setItem("username", data.user.username);
-      localStorage.setItem("user", JSON.stringify(data.user));
+      if (data.user.profile_image) {
+        localStorage.setItem("profile_image", data.user.profile_image);
+      } else {
+        localStorage.removeItem("profile_image");
+      }
 
       if (data.has_genres) {
         navigate("/home"); 
       } else {
         navigate("/genres"); 
       }
-
     } catch (error) {
-      setError("Unable to connect to server. Make sure Flask is running.");
+      setError("Unable to connect to server. Is Backend running?");
     } finally {
       setLoading(false);
     }
   };
 
-  // 🔥 NAYA: Step 1 - Send OTP for Forgot Password
   const handleForgotPassword = async (e) => {
     e.preventDefault();
     setForgotError(""); setForgotSuccess(""); setForgotLoading(true);
     try {
-      const res = await fetch("http://127.0.0.1:5000/forgot-password", {
+      const res = await fetch(`${API_BASE_URL}/forgot-password`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email: forgotEmail })
@@ -35376,7 +35935,7 @@ export default function Login() {
         return;
       }
       setForgotSuccess("OTP sent to your email!");
-      setForgotStep(2); // Move to Step 2 (Enter OTP)
+      setForgotStep(2);
     } catch (err) {
       setForgotError("Server connection error.");
     } finally {
@@ -35384,12 +35943,11 @@ export default function Login() {
     }
   };
 
-  // 🔥 NAYA: Step 2 - Verify OTP and Reset Password
   const handleResetPassword = async (e) => {
     e.preventDefault();
     setForgotError(""); setForgotSuccess(""); setForgotLoading(true);
     try {
-      const res = await fetch("http://127.0.0.1:5000/reset-password-otp", {
+      const res = await fetch(`${API_BASE_URL}/reset-password-otp`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email: forgotEmail, otp: forgotOtp, new_password: newPassword })
@@ -35399,11 +35957,10 @@ export default function Login() {
         setForgotError(data.error || "Invalid OTP or request.");
         return;
       }
-      // Reset successful! Close modal and show success on login screen
       setShowForgotModal(false);
       setForgotStep(1);
       setForgotEmail(""); setForgotOtp(""); setNewPassword("");
-      setSuccessMsg("Password reset successfully! Please log in with your new password.");
+      setSuccessMsg("Password reset successfully! Please log in.");
     } catch (err) {
       setForgotError("Server connection error.");
     } finally {
@@ -35434,9 +35991,8 @@ export default function Login() {
             <div className="input-group">
               <div style={{ display: "flex", justifyContent: "space-between" }}>
                 <label>Password</label>
-                {/* 🔥 NAYA: Forgot Password Link */}
                 <span 
-                  style={{ fontSize: "12px", color: "#9b5cff", cursor: "pointer", fontWeight: "600" }} 
+                  style={{ fontSize: "12px", color: "var(--primary-accent)", cursor: "pointer", fontWeight: "600" }} 
                   onClick={() => setShowForgotModal(true)}
                 >
                   Forgot password?
@@ -35466,7 +36022,6 @@ export default function Login() {
         </div>
       </div>
 
-      {/* 🔥 NAYA: FORGOT PASSWORD MODAL */}
       {showForgotModal && (
         <div className="modal-overlay" style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, backgroundColor: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 }}>
           <div className="modal-content" style={{ background: "#0f0f13", padding: "30px", borderRadius: "12px", width: "90%", maxWidth: "400px", border: "1px solid rgba(155,92,255,0.3)" }}>
@@ -35520,8 +36075,10 @@ export default function Login() {
 </file>
 
 <file path="Frontend_react/src/pages/profile.jsx">
+// File Path: Frontend_react/src/pages/profile.jsx
 import React, { useState, useEffect } from "react";
 import { useParams, Link } from "react-router-dom";
+import { API_BASE_URL } from "../config/api"; // 🚀 FIX N4
 import SearchModal from "../components/SearchModal";
 import Navbar from "../components/Navbar";
 import { 
@@ -35530,7 +36087,6 @@ import {
   getUserCollections, 
   createCollection, 
   getCollectionDetails, 
-  toggleFollowUser, 
   getUserFollowStats,
   getUserReviews,
   getFollowersList, 
@@ -35539,6 +36095,15 @@ import {
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, Tooltip, ResponsiveContainer } from "recharts";
 import CinematicLoader from "../components/CinematicLoader";
 import "../styles/profile.css"; 
+
+const PRESET_AVATARS = [
+  "", 
+  "https://tse3.mm.bing.net/th/id/OIP.9vbmh3n9JcizPD5ecFmBUgHaHa?r=0&rs=1&pid=ImgDetMain&o=7&rm=3",
+  "https://tse4.mm.bing.net/th/id/OIP.PY1URYaJ4jhs8CvbhbPKlgHaHa?r=0&rs=1&pid=ImgDetMain&o=7&rm=3",
+  "https://tse3.mm.bing.net/th/id/OIP.W2Qrp2QmfDromFgPalLFwwAAAA?r=0&w=470&h=470&rs=1&pid=ImgDetMain&o=7&rm=3",
+  "https://tse2.mm.bing.net/th/id/OIP.pxTsssD9rMG8GTqKOfPu_wAAAA?r=0&w=270&h=270&rs=1&pid=ImgDetMain&o=7&rm=3",
+  "https://tse2.mm.bing.net/th/id/OIP.GX4T8ikMHvbVvt7effzc7AHaHa?r=0&rs=1&pid=ImgDetMain&o=7&rm=3"
+];
 
 export default function Profile() {
   const { id } = useParams();
@@ -35558,24 +36123,22 @@ export default function Profile() {
   const [newDesc, setNewDesc] = useState("");
   const [showCreateModal, setShowCreateModal] = useState(false);
 
-  // Collection Detail Modal States
   const [selectedCollection, setSelectedCollection] = useState(null);
   const [collectionMovies, setCollectionMovies] = useState([]);
   const [isColDetailOpen, setIsColDetailOpen] = useState(false);
 
-  // Edit Profile States (Username & Bio)
   const [showEditModal, setShowEditModal] = useState(false);
   const [editUsername, setEditUsername] = useState("");
   const [editBio, setEditBio] = useState("");
+  const [editAvatar, setEditAvatar] = useState(""); 
 
-  // Follow & Stats States
   const loggedInUserId = parseInt(localStorage.getItem("user_id"));
   const token = localStorage.getItem("token");
   const isMyProfile = loggedInUserId === parseInt(id);  
   const [isFollowing, setIsFollowing] = useState(false);
   const [followStats, setFollowStats] = useState({ followers_count: 0, following_count: 0 });
 
-  const COLORS = ["#9b5cff", "#1db954", "#f5c518", "#ff4757"];
+  const COLORS = ["var(--primary-accent)", "#1db954", "#f5c518", "#ff4757"];
   
   const [activeTab, setActiveTab] = useState("reviews");
   const [activeFilter, setActiveFilter] = useState("All");
@@ -35594,10 +36157,10 @@ export default function Profile() {
 
     if (type === "followers") {
       const data = await getFollowersList(id);
-      setFollowListData(data);
+      setFollowListData(data || []);
     } else {
       const data = await getFollowingList(id);
-      setFollowListData(data);
+      setFollowListData(data || []);
     }
   };
   
@@ -35605,12 +36168,13 @@ export default function Profile() {
     window.scrollTo(0, 0);
     const fetchData = async () => {
       setLoading(true);
-      const [pData, aData, cData, sData, rData] = await Promise.all([
+      const [pData, aData, cData, sData, rData, followersData] = await Promise.all([
         getUserProfile(id),
         getUserAnalytics(id),
         getUserCollections(id),
         getUserFollowStats(id),
-        getUserReviews(id)
+        getUserReviews(id),
+        getFollowersList(id)
       ]);
       
       setProfileData({
@@ -35621,10 +36185,18 @@ export default function Profile() {
       if (aData) setAnalyticsData(aData);
       if (cData) setCollections(cData);
       if (sData) setFollowStats(sData);
+
+      if (Array.isArray(followersData) && loggedInUserId) {
+        const alreadyFollowing = followersData.some(
+          (u) => Number(u.user_id) === Number(loggedInUserId)
+        );
+        setIsFollowing(alreadyFollowing);
+      }
+
       setLoading(false);
     };
     fetchData();
-  }, [id]);
+  }, [id, loggedInUserId]);
 
   const getInitials = (name) => {
     if (!name) return "";
@@ -35654,38 +36226,58 @@ export default function Profile() {
   const handleOpenEdit = () => {
     setEditUsername(profileData.user.username);
     setEditBio(profileData.user.bio || "");
+    setEditAvatar(profileData.user.profile_image || "");
     setShowEditModal(true);
   };
 
   const handleSaveProfile = async (e) => {
-    e.preventDefault(); 
+    e.preventDefault();
+    const cleanAvatar = (editAvatar || "").trim();
+    if (cleanAvatar && !/^https?:\/\//i.test(cleanAvatar)) {
+      alert("Please use a valid https:// image URL.");
+      return;
+    }
+
     try {
-      const res = await fetch("http://127.0.0.1:5000/user/edit", {
+      const res = await fetch(`${API_BASE_URL}/user/edit`, { // 🚀 FIX N4
         method: "POST",
         headers: {
-          "Content-Type": "application/json"
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
         },
-        body: JSON.stringify({ 
-          user_id: id, 
-          username: editUsername,
-          bio: editBio 
+        body: JSON.stringify({
+          username: editUsername.trim(),
+          bio: editBio,
+          profile_image: cleanAvatar
         })
       });
 
       if (res.ok) {
+        const cleanUsername = editUsername.trim();
+        localStorage.setItem("username", cleanUsername);
+        if (cleanAvatar) {
+          localStorage.setItem("profile_image", cleanAvatar);
+        } else {
+          localStorage.removeItem("profile_image");
+        }
+
         setProfileData((prev) => ({
           ...prev,
-          user: { ...prev.user, bio: editBio, username: editUsername } 
+          user: {
+            ...prev.user,
+            bio: editBio,
+            username: cleanUsername,
+            profile_image: cleanAvatar
+          }
         }));
-        alert("Profile saved successfully! 🎉");
         setShowEditModal(false);
       } else {
         const errData = await res.json();
-        alert(`Backend Error: ${errData.error || 'Failed to save profile'}`);
+        alert(errData.error || "Failed to save profile.");
       }
     } catch (error) {
-      console.error("Save profile crash:", error);
-      alert("Code crash ho gaya! Check console for errors.");
+      console.error("Save profile error:", error);
+      alert("Unable to update profile right now.");
     }
   };
 
@@ -35713,19 +36305,18 @@ export default function Profile() {
 
   const handleFollowToggle = async () => {
     try {
-      const res = await fetch(`http://127.0.0.1:5000/users/${id}/follow`, {
+      const res = await fetch(`${API_BASE_URL}/user/${id}/follow`, { // 🚀 FIX N4 & N7
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}` // 🔥 Token bhej rahe hain
+          "Authorization": `Bearer ${token}`
         }
       });
 
       if (res.ok) {
         const data = await res.json();
-        setIsFollowing(data.is_following);
+        setIsFollowing(Boolean(data.is_following));
         
-        // Follow dabane ke baad stats refresh karne ke liye
         const sData = await getUserFollowStats(id);
         setFollowStats(sData);
       } else {
@@ -35748,7 +36339,13 @@ export default function Profile() {
       <div className="profile-layout">
         <aside className="profile-sidebar">
           <div className="profile-card">
-            <div className="pc-avatar">{getInitials(profileData.user.username)}</div>
+            <div className="pc-avatar" style={{ background: profileData.user.profile_image ? "transparent" : "#3b4255", overflow: "hidden" }}>
+              {profileData.user.profile_image ? (
+                <img src={profileData.user.profile_image} alt="Avatar" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+              ) : (
+                getInitials(profileData.user.username)
+              )}
+            </div>
             <h2 className="pc-fullname">{profileData.user.username}</h2>
             <span className="pc-username">@{profileData.user.username.toLowerCase().replace(/\s/g, '_')}</span>
             
@@ -35768,14 +36365,14 @@ export default function Profile() {
                 👥 
                 <span 
                   onClick={() => handleOpenFollowModal("followers")} 
-                  style={{ cursor: "pointer", color: "#9b5cff", fontWeight: "600" }}
+                  style={{ cursor: "pointer", color: "var(--primary-accent)", fontWeight: "600" }}
                 >
                   {followStats.followers_count} Followers
                 </span> 
                 • 
                 <span 
                   onClick={() => handleOpenFollowModal("following")} 
-                  style={{ cursor: "pointer", color: "#9b5cff", fontWeight: "600" }}
+                  style={{ cursor: "pointer", color: "var(--primary-accent)", fontWeight: "600" }}
                 >
                   {followStats.following_count} Following
                 </span>
@@ -35798,7 +36395,7 @@ export default function Profile() {
                 className="btn-edit-profile" 
                 onClick={handleFollowToggle}
                 style={{
-                  background: isFollowing ? "transparent" : "#9b5cff",
+                  background: isFollowing ? "transparent" : "var(--primary-accent)",
                   color: "#fff",
                   border: isFollowing ? "1px solid rgba(255,255,255,0.2)" : "none",
                   fontWeight: "600",
@@ -35867,14 +36464,13 @@ export default function Profile() {
                           </div>
                           
                           <div className="pr-meta">
-                            Movie • {review.release_year || "2024"} • 
+                            Movie • {review.release_year || "Unknown"}
                             <span className="pr-star-display">
                               {" ★".repeat(Math.floor(review.rating || 0))}
                               {(review.rating || 0) % 1 !== 0 ? " ½" : ""}
                             </span>
                           </div>
                           
-                          {/* 🌟 Profile par Spoiler Blur Logic */}
                           <div style={{ position: 'relative', marginBottom: '10px' }}>
                             <p 
                               className="pr-review-text" 
@@ -35925,7 +36521,7 @@ export default function Profile() {
                   <button 
                     className="btn-create-col" 
                     onClick={() => setShowCreateModal(true)}
-                    style={{ background: "#9b5cff", color: "#fff", border: "none", padding: "8px 16px", borderRadius: "8px", cursor: "pointer", fontWeight: "600" }}
+                    style={{ background: "var(--primary-accent)", color: "#fff", border: "none", padding: "8px 16px", borderRadius: "8px", cursor: "pointer", fontWeight: "600" }}
                   >
                     + New Collection
                   </button>
@@ -35967,7 +36563,7 @@ export default function Profile() {
                     >
                       <h4 style={{ margin: "0 0 8px 0", fontSize: "18px", color: "#fff" }}>{col.title}</h4>
                       <p style={{ margin: "0 0 15px 0", color: "#888", fontSize: "14px" }}>{col.description || "No description provided."}</p>
-                      <span className="col-count" style={{ fontSize: "12px", color: "#9b5cff", fontWeight: "600" }}>🎬 {col.movie_count} Movies</span>
+                      <span className="col-count" style={{ fontSize: "12px", color: "var(--primary-accent)", fontWeight: "600" }}>🎬 {col.movie_count} Movies</span>
                     </div>
                   ))
                 )}
@@ -36031,7 +36627,7 @@ export default function Profile() {
                           cursor={{ fill: 'rgba(255,255,255,0.05)' }} 
                           contentStyle={{ backgroundColor: "#111", borderColor: "#333", color: "#fff" }} 
                         />
-                        <Bar dataKey="movies" fill="#9b5cff" radius={[6, 6, 0, 0]} />
+                        <Bar dataKey="movies" fill="var(--primary-accent)" radius={[6, 6, 0, 0]} />
                       </BarChart>
                     </ResponsiveContainer>
                   </div>
@@ -36062,7 +36658,7 @@ export default function Profile() {
                         <span style={{ fontSize: "13px", color: "#aaa" }}>{movie.release_year} • ⭐ {movie.avg_rating || "N/A"}</span>
                       </div>
                     </div>
-                    <span style={{ color: "#9b5cff", fontSize: "14px", fontWeight: "600" }}>View →</span>
+                    <span style={{ color: "var(--primary-accent)", fontSize: "14px", fontWeight: "600" }}>View →</span>
                   </Link>
                 ))
               )}
@@ -36073,20 +36669,48 @@ export default function Profile() {
         </div>
       )}
 
-      {/* EDIT PROFILE MODAL */}
+      {/* EDIT PROFILE MODAL (WITH AVATAR SELECTION) */}
       {showEditModal && (
         <div className="modal-overlay" onClick={() => setShowEditModal(false)}>
-          <div className="col-modal-content" style={{ maxWidth: "400px" }} onClick={(e) => e.stopPropagation()}>
+          <div className="col-modal-content" style={{ maxWidth: "450px" }} onClick={(e) => e.stopPropagation()}>
             <h3>Edit Profile</h3>
             
             <form onSubmit={handleSaveProfile}>
+              <label style={{ fontSize: "13px", color: "#aaa", display: "block", marginBottom: "10px" }}>Choose Avatar</label>
+              <div style={{ display: "flex", gap: "10px", marginBottom: "20px", flexWrap: "wrap" }}>
+                {PRESET_AVATARS.map((url, idx) => (
+                  <div 
+                    key={idx}
+                    onClick={() => setEditAvatar(url)}
+                    style={{
+                      width: "50px", height: "50px", borderRadius: "50%",
+                      background: url ? "transparent" : "#3b4255", 
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      cursor: "pointer", border: editAvatar === url ? "2px solid var(--primary-accent)" : "2px solid transparent",
+                      boxShadow: editAvatar === url ? "0 0 10px rgba(155, 92, 255, 0.5)" : "none",
+                      overflow: "hidden"
+                    }}
+                  >
+                    {url ? <img src={url} alt="Preset" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <span style={{ fontSize: "12px" }}>Aa</span>}
+                  </div>
+                ))}
+              </div>
+
+              <label style={{ fontSize: "13px", color: "#aaa", display: "block", marginBottom: "5px" }}>Or Paste Custom Photo URL</label>
+              <input 
+                type="text" 
+                placeholder="https://example.com/my-photo.jpg"
+                value={editAvatar} 
+                onChange={(e) => setEditAvatar(e.target.value)}
+                style={{ width: "100%", padding: "12px", background: "#1a1a20", border: "1px solid #444", color: "#fff", borderRadius: "6px", marginBottom: "20px", outline: "none" }}
+              />
+
               <label style={{ fontSize: "13px", color: "#aaa", display: "block", marginBottom: "5px" }}>Username</label>
               <input 
                 type="text" 
                 value={editUsername} 
                 onChange={(e) => setEditUsername(e.target.value)}
                 style={{ width: "100%", padding: "12px", background: "#1a1a20", border: "1px solid #444", color: "#fff", borderRadius: "6px", marginBottom: "15px", outline: "none" }}
-                autoFocus
               />
 
               <label style={{ fontSize: "13px", color: "#aaa", display: "block", marginBottom: "5px" }}>Bio</label>
@@ -36098,8 +36722,8 @@ export default function Profile() {
               />
               
               <div style={{ display: "flex", gap: "10px" }}>
-                <button type="submit" className="qc-save" style={{ flex: 1, padding: "10px" }}>Save Changes</button>
-                <button type="button" className="qc-cancel" onClick={() => setShowEditModal(false)} style={{ flex: 1, padding: "10px" }}>Cancel</button>
+                <button type="submit" className="qc-save" style={{ flex: 1, padding: "10px", background: "var(--primary-accent)", color: "#fff", border: "none", borderRadius: "6px", cursor: "pointer", fontWeight: "600" }}>Save Changes</button>
+                <button type="button" className="qc-cancel" onClick={() => setShowEditModal(false)} style={{ flex: 1, padding: "10px", background: "transparent", color: "#aaa", border: "1px solid #444", borderRadius: "6px", cursor: "pointer" }}>Cancel</button>
               </div>
             </form>
 
@@ -36122,10 +36746,7 @@ export default function Profile() {
                   <Link 
                     to={`/profile/${user.user_id}`} 
                     key={user.user_id} 
-                    onClick={() => {
-                      setShowFollowModal(false);
-                      setTimeout(() => window.location.reload(), 100);
-                    }}
+                    onClick={() => setShowFollowModal(false)}
                     style={{ 
                       display: "flex", alignItems: "center", gap: "15px", 
                       padding: "12px", background: "#1a1a20", borderRadius: "10px", 
@@ -36133,8 +36754,8 @@ export default function Profile() {
                       border: "1px solid rgba(255,255,255,0.05)"
                     }}
                   >
-                    <div style={{ width: "42px", height: "42px", borderRadius: "50%", background: "linear-gradient(135deg, #9b5cff, #47b8ff)", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: "bold", fontSize: "16px" }}>
-                      {user.username.charAt(0).toUpperCase()}
+                    <div style={{ width: "42px", height: "42px", borderRadius: "50%", background: user.profile_image ? "transparent" : "linear-gradient(135deg, var(--primary-accent), #47b8ff)", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: "bold", fontSize: "16px", overflow: "hidden" }}>
+                      {user.profile_image ? <img src={user.profile_image} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : user.username.charAt(0).toUpperCase()}
                     </div>
                     <span style={{ fontSize: "16px", fontWeight: "600" }}>@{user.username}</span>
                   </Link>
@@ -36154,12 +36775,9 @@ export default function Profile() {
 </file>
 
 <file path="Frontend_react/src/styles/navbar.css">
-/* 🔥 GOOGLE FONTS FOR NEXUS (Cinzel & Montserrat) */
 @import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@700&family=Montserrat:wght@300;400&display=swap');
 
-/* =========================================
-   GLOBAL NAVBAR & HEADER
-========================================= */
+/* GLOBAL NAVBAR & HEADER */
 .navbar {
   display: flex;
   justify-content: space-between;
@@ -36170,13 +36788,10 @@ export default function Profile() {
   position: sticky;
   top: 0;
   width: 100%;
-  z-index: 2147483647 !important; /* Max possible z-index */
+  z-index: 2147483647 !important;
   pointer-events: auto !important;
 }
 
-/* =========================================
-   🚀 NEXUS LOGO STYLING
-========================================= */
 .navbar-logo-container {
   display: flex;
   align-items: center;
@@ -36184,13 +36799,13 @@ export default function Profile() {
 }
 
 .nexus-logo {
-  font-family: 'Cinzel', serif; /* Classy Cinematic Font */
+  font-family: 'Cinzel', serif;
   font-size: 2.2rem;
   font-weight: 700;
-  color: #ffffff; /* White color for premium look */
+  color: #ffffff;
   text-decoration: none;
-  letter-spacing: 6px; /* Text ke beech gap premium lagta hai */
-  text-shadow: 0px 0px 10px rgba(255, 255, 255, 0.3); /* Halka sa glow */
+  letter-spacing: 6px;
+  text-shadow: 0px 0px 10px rgba(255, 255, 255, 0.3);
 }
 
 .nexus-tagline {
@@ -36203,9 +36818,16 @@ export default function Profile() {
   text-transform: uppercase;
 }
 
-/* =========================================
-   🚀 BUTTERY SMOOTH HOVER ANIMATION
-========================================= */
+/* MOBILE TOGGLE BUTTON (HIDDEN ON DESKTOP) */
+.mobile-menu-btn {
+  display: none;
+  background: transparent;
+  border: none;
+  color: #fff;
+  cursor: pointer;
+  padding: 5px;
+}
+
 .header-actions {
   display: flex;
   align-items: center;
@@ -36249,9 +36871,6 @@ export default function Profile() {
   opacity: 1;
 }
 
-/* =========================================
-   NOTIFICATIONS & DROPDOWNS
-========================================= */
 .notif-dot {
   position: absolute;
   top: 6px;
@@ -36281,7 +36900,7 @@ export default function Profile() {
   width: 24px;
   height: 24px;
   border-radius: 50%;
-  background: linear-gradient(135deg, #9b5cff, #47b8ff);
+  background: linear-gradient(135deg, var(--primary-accent), #47b8ff);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -36291,9 +36910,6 @@ export default function Profile() {
   flex-shrink: 0;
 }
 
-/* =========================================
-   👤 PROFILE DROPDOWN FIX
-========================================= */
 .dropdown-divider {
   height: 1px;
   background: rgba(255, 255, 255, 0.08);
@@ -36330,17 +36946,6 @@ export default function Profile() {
   color: #ff4757;
 }
 
-/* =========================================
-   ✨ GLASSMORPHISM & CUSTOM SCROLLBAR
-========================================= */
-.glass-panel {
-  background: rgba(15, 15, 20, 0.65) !important;
-  backdrop-filter: blur(24px) !important;
-  -webkit-backdrop-filter: blur(24px) !important;
-  border: 1px solid rgba(255, 255, 255, 0.08) !important;
-  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.8) !important;
-}
-
 .custom-dropdown::-webkit-scrollbar {
   width: 5px;
 }
@@ -36355,110 +36960,213 @@ export default function Profile() {
 .custom-dropdown::-webkit-scrollbar-thumb:hover {
   background: rgba(155, 92, 255, 0.5); 
 }
+
+/* MOBILE FIXES */
+@media (max-width: 900px) {
+  .navbar {
+    padding: 12px 20px !important;
+  }
+  
+  .nexus-tagline {
+    display: none; 
+  }
+  
+  .nexus-logo {
+    font-size: 1.6rem;
+    letter-spacing: 3px;
+  }
+
+  .mobile-menu-btn {
+    display: block;
+    margin-left: auto;
+  }
+
+  /* Default hidden, absolute positioning relative to nearest container */
+  .header-actions {
+    display: none; 
+    position: absolute;
+    top: 65px;
+    right: 20px;
+    background: rgba(15, 15, 20, 0.98);
+    backdrop-filter: blur(15px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 12px;
+    padding: 20px;
+    flex-direction: column;
+    gap: 15px !important;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.9);
+    width: 220px;
+    z-index: 1000;
+  }
+
+  /* Toggle class to show */
+  .header-actions.mobile-open {
+    display: flex;
+  }
+
+  .nav-item {
+    gap: 12px;
+    width: 100%;
+    justify-content: flex-start; 
+  }
+  
+  .nav-text {
+    opacity: 1;
+    max-width: none;
+    font-size: 15px;
+  }
+
+  .custom-dropdown {
+    position: static; 
+    width: 100% !important;
+    box-shadow: none;
+    border: none;
+    background: rgba(0,0,0,0.3);
+    margin-top: 10px;
+  }
+}
 </file>
 
 <file path="backend/routes/auth.py">
-from flask import Blueprint, request, jsonify, g, current_app
-from backend.database import engine
-from sqlalchemy import text
+# File Path: backend/routes/auth.py
+import re
+import secrets
 import bcrypt
 import jwt
-import random
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+from flask import Blueprint, request, jsonify, g, current_app
+from flask_mail import Message
+from sqlalchemy import text
+
+from backend.database import engine
 from backend.config import JWT_SECRET_KEY
 from backend.middleware.auth_middleware import token_required
-from flask_mail import Message
-
-
-# 🔥 DHYAN RAKHNA: Tujhe apni main app file (jaise app.py ya extensions.py) se `mail` object import karna hoga.
-# Example: from backend.app import mail
-# (Neeche maine ek dummy import likha hai, apne folder structure ke hisaab se theek kar lena)
-from backend.extensions import mail
+from backend.extensions import mail, limiter
 
 auth_bp = Blueprint("auth", __name__)
 
+EMAIL_REGEX = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+OTP_MAX_ATTEMPTS = 5
+OTP_EXPIRY_MINUTES = 10
 
-# =====================================================================
-# 📧 HELPER FUNCTION: EMAIL BHEJNE KE LIYE
-# =====================================================================
+
+def generate_secure_otp():
+    """Generates a cryptographically secure 6-digit OTP and its bcrypt hash."""
+    raw_otp = f"{secrets.randbelow(900000) + 100000}"
+    hashed_otp = bcrypt.hashpw(raw_otp.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+    expires_at = datetime.utcnow() + timedelta(minutes=OTP_EXPIRY_MINUTES)
+    return raw_otp, hashed_otp, expires_at
+
+
 def send_otp_email(user_email, otp, subject="Your MovieVerse Verification Code"):
     try:
-        msg = Message(subject, 
-                      sender=current_app.config['MAIL_USERNAME'], 
-                      recipients=[user_email])
-        msg.body = f"Welcome to MovieVerse! 🎬\n\nYour 6-digit code is: {otp}\n\nPlease don't share this code with anyone."
+        msg = Message(
+            subject,
+            sender=current_app.config["MAIL_USERNAME"],
+            recipients=[user_email]
+        )
+        msg.body = (
+            f"Welcome to MovieVerse! 🎬\n\n"
+            f"Your 6-digit verification code is: {otp}\n"
+            f"This code expires in {OTP_EXPIRY_MINUTES} minutes.\n\n"
+            f"Please don't share this code with anyone."
+        )
         mail.send(msg)
         return True
     except Exception as e:
-        print("Mail Error:", e)
+        current_app.logger.error(f"Mail Error: {e}")
         return False
 
 
 # =====================================================================
-# 1️⃣ REGISTER (WITH OTP)
+# 1️⃣ REGISTER (FIX N2: Allow unverified users to re-register/get new OTP)
 # =====================================================================
 @auth_bp.route("/register", methods=["POST"])
+@limiter.limit("5 per 10 minutes")
 def register():
-    data = request.get_json()
+    data = request.get_json() or {}
 
-    username = data.get("username")
-    email = data.get("email")
-    password = data.get("password")
+    username = (data.get("username") or "").strip()
+    email = (data.get("email") or "").strip().lower()
+    password = data.get("password") or ""
 
     if not username or not email or not password:
         return jsonify({"error": "Username, email and password are required"}), 400
 
-    with engine.connect() as conn:
-        result = conn.execute(
-            text("SELECT user_id FROM users WHERE email = :email"),
-            {"email": email}
-        ).first()
+    if not EMAIL_REGEX.match(email):
+        return jsonify({"error": "Invalid email address format"}), 400
 
-    if result:
-        return jsonify({"error": "Email already registered"}), 409
+    if len(password) < 6:
+        return jsonify({"error": "Password must be at least 6 characters"}), 400
 
     password_hash = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
-    
-    # 🔥 NAYA: 6-digit OTP generate karo
-    otp = str(random.randint(100000, 999999))
+    raw_otp, hashed_otp, expires_at = generate_secure_otp()
 
     with engine.begin() as conn:
-        # 🔥 NAYA: is_verified aur otp columns add kiye
-        result = conn.execute(
-            text("""
-                INSERT INTO users (username, email, password_hash, is_verified, otp)
-                VALUES (:username, :email, :password_hash, 0, :otp)
-            """),
-            {
-                "username": username,
-                "email": email,
-                "password_hash": password_hash,
-                "otp": otp
-            }
-        )
-        user_id = result.lastrowid
+        existing = conn.execute(
+            text("SELECT user_id, is_verified, email FROM users WHERE email = :email OR username = :username"),
+            {"email": email, "username": username}
+        ).first()
 
-    # 🔥 NAYA: OTP Email fire karo!
-    email_sent = send_otp_email(email, otp, "Verify your MovieVerse Account")
+        if existing:
+            if existing.is_verified:
+                return jsonify({"error": "Email or username already registered"}), 409
+            else:
+                # User exists but not verified (Dead-end fix). Update OTP and allow retry.
+                conn.execute(
+                    text("""
+                        UPDATE users 
+                        SET password_hash = :password_hash, otp = :otp, 
+                            otp_expires_at = :expires_at, otp_attempts = 0
+                        WHERE user_id = :uid
+                    """),
+                    {
+                        "password_hash": password_hash,
+                        "otp": hashed_otp,
+                        "expires_at": expires_at,
+                        "uid": existing.user_id
+                    }
+                )
+                user_id = existing.user_id
+                target_email = existing.email
+        else:
+            result = conn.execute(
+                text("""
+                    INSERT INTO users (username, email, password_hash, is_verified, otp, otp_expires_at, otp_attempts)
+                    VALUES (:username, :email, :password_hash, 0, :otp, :expires_at, 0)
+                """),
+                {
+                    "username": username,
+                    "email": email,
+                    "password_hash": password_hash,
+                    "otp": hashed_otp,
+                    "expires_at": expires_at
+                }
+            )
+            user_id = result.lastrowid
+            target_email = email
+
+    email_sent = send_otp_email(target_email, raw_otp, "Verify your MovieVerse Account")
 
     if email_sent:
         return jsonify({
             "message": "User registered successfully! Please check your email for the OTP.",
             "user_id": user_id,
-            "email": email
+            "email": target_email
         }), 201
     else:
         return jsonify({"error": "User registered, but failed to send email. Please contact support."}), 500
 
 
 # =====================================================================
-# 2️⃣ VERIFY OTP (NEW ROUTE)
+# 2️⃣ VERIFY OTP 
 # =====================================================================
 @auth_bp.route("/verify-otp", methods=["POST"])
+@limiter.limit("5 per 10 minutes")
 def verify_otp():
-    data = request.get_json()
-    email = data.get("email")
-    user_otp = data.get("otp")
+    data = request.get_json() or {}
+    email = (data.get("email") or "").strip().lower()
+    user_otp = str(data.get("otp") or "").strip()
 
     if not email or not user_otp:
         return jsonify({"error": "Email and OTP are required"}), 400
@@ -36466,37 +37174,115 @@ def verify_otp():
     try:
         with engine.begin() as conn:
             user = conn.execute(
-                text("SELECT user_id, otp FROM users WHERE email = :email"), 
+                text("""
+                    SELECT user_id, otp, otp_expires_at, otp_attempts 
+                    FROM users WHERE email = :email
+                """),
                 {"email": email}
             ).mappings().first()
 
-            if user and user["otp"] == user_otp:
-                # 🟢 OTP Match! Account activate karo aur OTP delete kar do
-                conn.execute(text("""
-                    UPDATE users SET is_verified = 1, otp = NULL WHERE email = :email
-                """), {"email": email})
+            if not user or not user["otp"]:
+                return jsonify({"error": "Invalid or expired OTP."}), 400
 
-                conn.execute(text("""
+            attempts = int(user["otp_attempts"] or 0)
+            if attempts >= OTP_MAX_ATTEMPTS:
+                return jsonify({"error": "Too many failed attempts. Please request a new OTP."}), 429
+
+            if user["otp_expires_at"] and datetime.utcnow() > user["otp_expires_at"]:
+                return jsonify({"error": "OTP has expired. Please request a new one."}), 400
+
+            stored_otp = user["otp"]
+            is_valid = (
+                bcrypt.checkpw(user_otp.encode("utf-8"), stored_otp.encode("utf-8"))
+                if stored_otp.startswith("$2")
+                else (stored_otp == user_otp)
+            )
+
+            if not is_valid:
+                conn.execute(
+                    text("UPDATE users SET otp_attempts = otp_attempts + 1 WHERE user_id = :uid"),
+                    {"uid": user["user_id"]}
+                )
+                return jsonify({"error": "Invalid OTP. Please try again."}), 400
+
+            conn.execute(
+                text("""
+                    UPDATE users 
+                    SET is_verified = 1, otp = NULL, otp_expires_at = NULL, otp_attempts = 0 
+                    WHERE user_id = :uid
+                """),
+                {"uid": user["user_id"]}
+            )
+
+            conn.execute(
+                text("""
                     INSERT INTO notifications (user_id, message, type) 
                     VALUES (:uid, 'Welcome to MovieVerse! 🎬 Add your first movie to the watchlist.', 'welcome')
-                """), {"uid": user["user_id"]})
+                """),
+                {"uid": user["user_id"]}
+            )
 
-                return jsonify({"message": "Email verified successfully! You can now login."}), 200
-            else:
-                return jsonify({"error": "Invalid OTP. Please try again."}), 400
+            return jsonify({"message": "Email verified successfully! You can now login."}), 200
     except Exception as e:
-        print("Verify OTP Error:", e)
+        current_app.logger.error(f"Verify OTP Error: {e}")
         return jsonify({"error": "Internal server error"}), 500
 
 
 # =====================================================================
-# 3️⃣ LOGIN (BLOCKED IF NOT VERIFIED)
+# 3️⃣ RESEND OTP (FIX N2: Route added)
+# =====================================================================
+@auth_bp.route("/resend-otp", methods=["POST"])
+@limiter.limit("3 per 10 minutes")
+def resend_otp():
+    data = request.get_json() or {}
+    email = (data.get("email") or "").strip().lower()
+
+    if not email:
+        return jsonify({"error": "Email is required"}), 400
+
+    try:
+        raw_otp = None
+        with engine.begin() as conn:
+            user = conn.execute(
+                text("SELECT user_id, is_verified FROM users WHERE email = :email"),
+                {"email": email}
+            ).mappings().first()
+
+            if not user:
+                return jsonify({"error": "User not found"}), 404
+            
+            if user["is_verified"]:
+                return jsonify({"error": "Email is already verified. You can log in."}), 400
+
+            raw_otp, hashed_otp, expires_at = generate_secure_otp()
+            conn.execute(
+                text("""
+                    UPDATE users 
+                    SET otp = :otp, otp_expires_at = :expires_at, otp_attempts = 0 
+                    WHERE user_id = :uid
+                """),
+                {"otp": hashed_otp, "expires_at": expires_at, "uid": user["user_id"]}
+            )
+
+        if raw_otp:
+            send_otp_email(email, raw_otp, "MovieVerse - Your New Verification Code")
+            return jsonify({"message": "A new OTP has been sent to your email."}), 200
+        else:
+            return jsonify({"error": "Failed to generate OTP"}), 500
+    except Exception as e:
+        current_app.logger.error(f"Resend OTP Error: {e}")
+        return jsonify({"error": "Internal server error"}), 500
+
+
+# =====================================================================
+# 4️⃣ LOGIN (RATE LIMITED)
 # =====================================================================
 @auth_bp.route("/login", methods=["POST"])
+@limiter.limit("5 per minute")
 def login():
-    data = request.get_json()
-    email = data.get("email")
-    password = data.get("password")
+    data = request.get_json() or {}
+    email = (data.get("email") or "").strip().lower()
+    password = data.get("password") or ""
 
     if not email or not password:
         return jsonify({"error": "Email and password are required"}), 400
@@ -36513,7 +37299,9 @@ def login():
         if user is None:
             return jsonify({"error": "Invalid email or password"}), 401
 
-        # 🔥 NAYA: OTP Verification Check
+        if not bcrypt.checkpw(password.encode("utf-8"), user["password_hash"].encode("utf-8")):
+            return jsonify({"error": "Invalid email or password"}), 401
+
         if not user["is_verified"]:
             return jsonify({"error": "Please verify your email via OTP before logging in."}), 403
 
@@ -36524,14 +37312,11 @@ def login():
 
         has_genres = genre_check["count"] > 0
 
-    if not bcrypt.checkpw(password.encode("utf-8"), user["password_hash"].encode("utf-8")):
-        return jsonify({"error": "Invalid email or password"}), 401
-
     token = jwt.encode(
         {
             "user_id": user["user_id"],
             "email": user["email"],
-            "exp": datetime.utcnow() + timedelta(days=7)
+            "exp": datetime.now(timezone.utc) + timedelta(days=7)
         },
         JWT_SECRET_KEY,
         algorithm="HS256"
@@ -36552,48 +37337,53 @@ def login():
 
 
 # =====================================================================
-# 4️⃣ FORGOT PASSWORD & RESET (NEW ROUTES)
+# 5️⃣ FORGOT PASSWORD & RESET 
 # =====================================================================
 @auth_bp.route("/forgot-password", methods=["POST"])
+@limiter.limit("5 per 10 minutes")
 def forgot_password():
-    data = request.get_json()
-    email = data.get("email")
+    data = request.get_json() or {}
+    email = (data.get("email") or "").strip().lower()
 
     if not email:
         return jsonify({"error": "Email is required"}), 400
 
     try:
+        raw_otp = None
         with engine.begin() as conn:
             user = conn.execute(
                 text("SELECT user_id, is_verified FROM users WHERE email = :email"),
                 {"email": email}
             ).mappings().first()
 
-            if not user or not user["is_verified"]:
-                # Security best practice: Don't reveal if email exists or not to prevent guessing
-                return jsonify({"message": "If this email is registered and verified, you will receive an OTP."}), 200
-            
-            # Generate new OTP for password reset
-            otp = str(random.randint(100000, 999999))
-            conn.execute(
-                text("UPDATE users SET otp = :otp WHERE email = :email"),
-                {"otp": otp, "email": email}
-            )
+            if user and user["is_verified"]:
+                raw_otp, hashed_otp, expires_at = generate_secure_otp()
+                conn.execute(
+                    text("""
+                        UPDATE users 
+                        SET reset_otp = :otp, reset_otp_expires_at = :expires_at, reset_otp_attempts = 0 
+                        WHERE user_id = :uid
+                    """),
+                    {"otp": hashed_otp, "expires_at": expires_at, "uid": user["user_id"]}
+                )
 
-        send_otp_email(email, otp, "MovieVerse - Password Reset Code")
+        if raw_otp:
+            send_otp_email(email, raw_otp, "MovieVerse - Password Reset Code")
+
         return jsonify({"message": "If this email is registered and verified, you will receive an OTP."}), 200
 
     except Exception as e:
-        print("Forgot Password Error:", e)
+        current_app.logger.error(f"Forgot Password Error: {e}")
         return jsonify({"error": "Internal server error"}), 500
 
 
 @auth_bp.route("/reset-password-otp", methods=["PUT"])
+@limiter.limit("5 per 10 minutes")
 def reset_password_with_otp():
-    data = request.get_json()
-    email = data.get("email")
-    user_otp = data.get("otp")
-    new_password = data.get("new_password")
+    data = request.get_json() or {}
+    email = (data.get("email") or "").strip().lower()
+    user_otp = str(data.get("otp") or "").strip()
+    new_password = data.get("new_password") or ""
 
     if not email or not user_otp or not new_password:
         return jsonify({"error": "Email, OTP, and new password are required"}), 400
@@ -36604,43 +37394,70 @@ def reset_password_with_otp():
     try:
         with engine.begin() as conn:
             user = conn.execute(
-                text("SELECT user_id, otp FROM users WHERE email = :email"),
+                text("""
+                    SELECT user_id, reset_otp, reset_otp_expires_at, reset_otp_attempts 
+                    FROM users WHERE email = :email
+                """),
                 {"email": email}
             ).mappings().first()
 
-            if user and user["otp"] == user_otp:
-                # 🟢 OTP Match! Hash new password and clear OTP
-                new_password_hash = bcrypt.hashpw(new_password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
-                conn.execute(
-                    text("UPDATE users SET password_hash = :hash, otp = NULL WHERE email = :email"),
-                    {"hash": new_password_hash, "email": email}
-                )
-
-                conn.execute(text("""
-                    INSERT INTO notifications (user_id, message, type) 
-                    VALUES (:uid, 'Your password was updated successfully. 🔒', 'security')
-                """), {"uid": user["user_id"]})
-
-                return jsonify({"message": "Password reset successfully! You can now login."}), 200
-            else:
+            if not user or not user["reset_otp"]:
                 return jsonify({"error": "Invalid or expired OTP"}), 400
 
+            attempts = int(user["reset_otp_attempts"] or 0)
+            if attempts >= OTP_MAX_ATTEMPTS:
+                return jsonify({"error": "Too many failed attempts. Please request a new reset OTP."}), 429
+
+            if user["reset_otp_expires_at"] and datetime.utcnow() > user["reset_otp_expires_at"]:
+                return jsonify({"error": "OTP has expired. Please request a new one."}), 400
+
+            stored_otp = user["reset_otp"]
+            is_valid = (
+                bcrypt.checkpw(user_otp.encode("utf-8"), stored_otp.encode("utf-8"))
+                if stored_otp.startswith("$2")
+                else (stored_otp == user_otp)
+            )
+
+            if not is_valid:
+                conn.execute(
+                    text("UPDATE users SET reset_otp_attempts = reset_otp_attempts + 1 WHERE user_id = :uid"),
+                    {"uid": user["user_id"]}
+                )
+                return jsonify({"error": "Invalid or expired OTP"}), 400
+
+            new_password_hash = bcrypt.hashpw(new_password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+            conn.execute(
+                text("""
+                    UPDATE users 
+                    SET password_hash = :hash, reset_otp = NULL, reset_otp_expires_at = NULL, reset_otp_attempts = 0 
+                    WHERE user_id = :uid
+                """),
+                {"hash": new_password_hash, "uid": user["user_id"]}
+            )
+
+            conn.execute(
+                text("""
+                    INSERT INTO notifications (user_id, message, type) 
+                    VALUES (:uid, 'Your password was updated successfully. 🔒', 'security')
+                """),
+                {"uid": user["user_id"]}
+            )
+
+            return jsonify({"message": "Password reset successfully! You can now login."}), 200
+
     except Exception as e:
-        print("Reset Password Error:", e)
+        current_app.logger.error(f"Reset Password Error: {e}")
         return jsonify({"error": "Internal server error"}), 500
 
 
 # =====================================================================
-# 5️⃣ CHANGE PASSWORD (LOGGED IN USERS - UNCHANGED)
+# 6️⃣ CHANGE PASSWORD
 # =====================================================================
 @auth_bp.route("/change-password", methods=["PUT"])
 @token_required
 def change_password():
     user_id = g.user_id
-    data = request.get_json()
-
-    if not data:
-        return jsonify({"error": "Request body is required"}), 400
+    data = request.get_json() or {}
 
     current_password = data.get("current_password")
     new_password = data.get("new_password")
@@ -36670,94 +37487,102 @@ def change_password():
             text("UPDATE users SET password_hash = :password_hash WHERE user_id = :user_id"),
             {"password_hash": new_password_hash, "user_id": user_id}
         )
-
-        conn.execute(text("""
-            INSERT INTO notifications (user_id, message, type) 
-            VALUES (:uid, 'Your password was changed successfully. 🔒', 'security')
-        """), {"uid": user_id})
+        conn.execute(
+            text("""
+                INSERT INTO notifications (user_id, message, type) 
+                VALUES (:uid, 'Your password was changed successfully. 🔒', 'security')
+            """),
+            {"uid": user_id}
+        )
 
     return jsonify({"message": "Password changed successfully"}), 200
 
+
+# =====================================================================
+# 🔔 NOTIFICATIONS 
+# =====================================================================
 @auth_bp.route("/notifications", methods=["GET"])
 @token_required
 def get_notifications():
     user_id = g.user_id
     try:
         with engine.connect() as conn:
-            # Sirf latest 10 notifications bhejenge
             query = text("""
                 SELECT notification_id, sender_id, message, type, is_read, created_at 
                 FROM notifications 
                 WHERE user_id = :uid 
                 ORDER BY created_at DESC 
-                LIMIT 10
+                LIMIT 15
             """)
             notifs = [dict(row) for row in conn.execute(query, {"uid": user_id}).mappings().all()]
-            
-            # Unread notifications ka count bhi bhejenge navbar bell icon par red dot ke liye
-            unread_count = sum(1 for n in notifs if n['is_read'] == 0)
 
-            return jsonify({"notifications": notifs, "unread_count": unread_count}), 200
+            unread_count = conn.execute(
+                text("SELECT COUNT(*) FROM notifications WHERE user_id = :uid AND is_read = 0"),
+                {"uid": user_id}
+            ).scalar() or 0
+
+            return jsonify({"notifications": notifs, "unread_count": int(unread_count)}), 200
     except Exception as e:
-        print("Notification Error:", e)
+        current_app.logger.error(f"Notification Error: {e}")
         return jsonify({"error": "Failed to fetch notifications"}), 500
 
-# =====================================================================
-# 🔔 MARK NOTIFICATIONS AS READ
-# =====================================================================
+
 @auth_bp.route("/notifications/read", methods=["PUT"])
 @token_required
 def mark_notifications_read():
     user_id = g.user_id
     try:
         with engine.begin() as conn:
-            conn.execute(text("""
-                UPDATE notifications 
-                SET is_read = 1 
-                WHERE user_id = :uid AND is_read = 0
-            """), {"uid": user_id})
+            conn.execute(
+                text("UPDATE notifications SET is_read = 1 WHERE user_id = :uid AND is_read = 0"),
+                {"uid": user_id}
+            )
         return jsonify({"message": "Notifications marked as read"}), 200
     except Exception as e:
-        print("Mark Read Error:", e)
+        current_app.logger.error(f"Mark Read Error: {e}")
         return jsonify({"error": "Failed to update notifications"}), 500
 
-# =====================================================================
-# 🗑️ DELETE SINGLE NOTIFICATION
-# =====================================================================
+
 @auth_bp.route("/notifications/<int:notif_id>", methods=["DELETE"])
 @token_required
 def delete_notification(notif_id):
     user_id = g.user_id
     try:
         with engine.begin() as conn:
-            # Sirf log-in user apni hi notification delete kar sake
             conn.execute(
                 text("DELETE FROM notifications WHERE notification_id = :nid AND user_id = :uid"),
                 {"nid": notif_id, "uid": user_id}
             )
         return jsonify({"message": "Notification deleted"}), 200
     except Exception as e:
-        print("Delete Notif Error:", e)
+        current_app.logger.error(f"Delete Notif Error: {e}")
         return jsonify({"error": "Failed to delete notification"}), 500
 
 
-
 # =====================================================================
-# 👤 TOGGLE FOLLOW USER
+# 👤 UNIFIED TOGGLE FOLLOW USER 
 # =====================================================================
 @auth_bp.route("/users/<int:target_user_id>/follow", methods=["POST"])
+@auth_bp.route("/user/<int:target_user_id>/follow", methods=["POST"])
 @token_required
 def toggle_follow(target_user_id):
-    user_id = g.user_id 
+    user_id = int(g.user_id)
+    target_user_id = int(target_user_id)
 
     if user_id == target_user_id:
         return jsonify({"error": "You cannot follow yourself"}), 400
 
     try:
         with engine.begin() as conn:
-            # 🔥 FIX: 'following_id' use kiya hai ab teri table ke hisaab se
+            target_exists = conn.execute(
+                text("SELECT user_id FROM users WHERE user_id = :tid"),
+                {"tid": target_user_id}
+            ).first()
+            if not target_exists:
+                return jsonify({"error": "Target user not found"}), 404
+
             existing_follow = conn.execute(
-                text("SELECT * FROM followers WHERE follower_id = :f1 AND following_id = :f2"),
+                text("SELECT 1 FROM followers WHERE follower_id = :f1 AND following_id = :f2"),
                 {"f1": user_id, "f2": target_user_id}
             ).first()
 
@@ -36766,127 +37591,223 @@ def toggle_follow(target_user_id):
                     text("DELETE FROM followers WHERE follower_id = :f1 AND following_id = :f2"),
                     {"f1": user_id, "f2": target_user_id}
                 )
-                return jsonify({"message": "Unfollowed successfully", "is_following": False}), 200
+                return jsonify({
+                    "status": "unfollowed",
+                    "is_following": False,
+                    "message": "Unfollowed successfully"
+                }), 200
             else:
                 conn.execute(
                     text("INSERT INTO followers (follower_id, following_id) VALUES (:f1, :f2)"),
                     {"f1": user_id, "f2": target_user_id}
                 )
 
-                # 🔥 NOTIFICATION TRIGGER
-                sender = conn.execute(
-                    text("SELECT username FROM users WHERE user_id = :u"), {"u": user_id}
-                ).mappings().first()
-                
-                sender_name = sender["username"] if sender else "Someone"
-                
-                conn.execute(text("""
-                    INSERT INTO notifications (user_id, sender_id, message, type) 
-                    VALUES (:target, :sender, :msg, 'follow')
-                """), {
-                    "target": target_user_id, 
-                    "sender": user_id, 
-                    "msg": f"@{sender_name} started following you."
-                })
+                already_notified = conn.execute(
+                    text("""
+                        SELECT 1 FROM notifications 
+                        WHERE user_id = :target AND sender_id = :sender AND type = 'follow' AND is_read = 0
+                        LIMIT 1
+                    """),
+                    {"target": target_user_id, "sender": user_id}
+                ).first()
 
-                return jsonify({"message": "Followed successfully", "is_following": True}), 200
+                if not already_notified:
+                    sender = conn.execute(
+                        text("SELECT username FROM users WHERE user_id = :u"),
+                        {"u": user_id}
+                    ).mappings().first()
+                    sender_name = sender["username"] if sender else "Someone"
+
+                    conn.execute(
+                        text("""
+                            INSERT INTO notifications (user_id, sender_id, message, type) 
+                            VALUES (:target, :sender, :msg, 'follow')
+                        """),
+                        {
+                            "target": target_user_id,
+                            "sender": user_id,
+                            "msg": f"@{sender_name} started following you."
+                        }
+                    )
+
+                return jsonify({
+                    "status": "followed",
+                    "is_following": True,
+                    "message": "Followed successfully"
+                }), 200
 
     except Exception as e:
-        print(f"FOLLOW ERROR: {e}")
+        current_app.logger.error(f"FOLLOW ERROR: {e}")
         return jsonify({"error": "Failed to follow user"}), 500
 </file>
 
 <file path="backend/routes/search.py">
+# File Path: backend/routes/search.py
 import jwt
-from flask import Blueprint, request, jsonify, g, current_app
+from flask import Blueprint, request, jsonify, g
 from sqlalchemy import text
 
-from backend.services.search import search_movies
 from backend.database import engine
 from backend.middleware.auth_middleware import token_required
-
+from backend.config import JWT_SECRET_KEY
 
 search_bp = Blueprint("search", __name__)
+
+
+def escape_like(val: str) -> str:
+    """Escapes % and _ wildcards for safe SQL LIKE queries (Fix #24)."""
+    return val.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def save_user_search_query(conn, user_id: int, query: str):
+    """Deduplicates and saves a search query (max 255 chars) for a user (Fix #15)."""
+    clean_q = query.strip()[:255]
+    if len(clean_q) < 2:
+        return
+    # Remove older identical or prefix partial queries from this user to prevent clutter
+    conn.execute(
+        text("""
+            DELETE FROM search_history 
+            WHERE user_id = :uid 
+              AND (LOWER(search_query) = LOWER(:q) OR LOWER(:q) LIKE CONCAT(LOWER(search_query), '%'))
+        """),
+        {"uid": user_id, "q": clean_q}
+    )
+    conn.execute(
+        text("INSERT INTO search_history (user_id, search_query) VALUES (:uid, :q)"),
+        {"uid": user_id, "q": clean_q}
+    )
+
 
 @search_bp.route("/search", methods=["GET"])
 def search():
     query = request.args.get("q", "").strip()
     search_type = request.args.get("type", "movie")
-    
+    should_save = request.args.get("save", "0") == "1"
+
+    if not query:
+        return jsonify([]), 200
+
     current_user_id = None
     auth_header = request.headers.get("Authorization")
     if auth_header and auth_header.startswith("Bearer "):
         try:
             token = auth_header.split(" ")[1]
-            payload = jwt.decode(token, current_app.config.get("SECRET_KEY", "your_secret_key"), algorithms=["HS256"])
+            payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=["HS256"])
             current_user_id = payload.get("user_id") or payload.get("id")
         except Exception:
             pass
 
-    with engine.connect() as conn:
+    escaped_q = escape_like(query)
+    search_pattern = f"%{escaped_q}%"
+
+    with engine.begin() as conn:
+        # 🚀 P1 FIX #15: Only save to history when explicitly requested (Enter / Result Click)
+        if should_save and current_user_id:
+            try:
+                save_user_search_query(conn, int(current_user_id), query)
+            except Exception:
+                pass
+
         if search_type == "user":
             if current_user_id:
                 users_query = text("""
-                    SELECT user_id, username 
+                    SELECT user_id, username, profile_image 
                     FROM users 
-                    WHERE username LIKE :q AND user_id != :current_id 
+                    WHERE username LIKE :q ESCAPE '\\\\' AND user_id != :current_id 
                     LIMIT 12
                 """)
-                results = [dict(row) for row in conn.execute(users_query, {"q": f"%{query}%", "current_id": current_user_id}).mappings().all()]
+                results = [
+                    dict(row) for row in conn.execute(
+                        users_query,
+                        {"q": search_pattern, "current_id": current_user_id}
+                    ).mappings().all()
+                ]
             else:
                 users_query = text("""
-                    SELECT user_id, username 
+                    SELECT user_id, username, profile_image 
                     FROM users 
-                    WHERE username LIKE :q 
+                    WHERE username LIKE :q ESCAPE '\\\\'
                     LIMIT 12
                 """)
-                results = [dict(row) for row in conn.execute(users_query, {"q": f"%{query}%"}).mappings().all()]
-            
+                results = [
+                    dict(row) for row in conn.execute(
+                        users_query,
+                        {"q": search_pattern}
+                    ).mappings().all()
+                ]
+
             return jsonify(results), 200
 
         elif search_type == "actor":
-            search_pattern = f"%{query}%"
             actors_query = text("""
                 SELECT MIN(actor_id) as actor_id, actor_name 
                 FROM actors 
-                WHERE actor_name LIKE :q 
+                WHERE actor_name LIKE :q ESCAPE '\\\\'
                 GROUP BY actor_name
                 LIMIT 12
             """)
-            results = [dict(row) for row in conn.execute(actors_query, {"q": search_pattern}).mappings().all()]
+            results = [
+                dict(row) for row in conn.execute(
+                    actors_query,
+                    {"q": search_pattern}
+                ).mappings().all()
+            ]
             return jsonify(results), 200
 
         else:
-            # Movie search logic
             movies_query = text("""
                 SELECT movie_id, title, release_year, avg_rating, poster_url 
                 FROM movies 
-                WHERE title LIKE :q 
+                WHERE title LIKE :q ESCAPE '\\\\'
                 LIMIT 12
             """)
-            results = [dict(row) for row in conn.execute(movies_query, {"q": f"%{query}%"}).mappings().all()]
+            results = [
+                dict(row) for row in conn.execute(
+                    movies_query,
+                    {"q": search_pattern}
+                ).mappings().all()
+            ]
             return jsonify(results), 200
 
-    
+
+@search_bp.route("/search/history", methods=["POST"])
+@token_required
+def add_search_history():
+    """Explicit endpoint to save a completed search query on Enter or result click."""
+    user_id = int(g.user_id)
+    data = request.get_json() or {}
+    query = str(data.get("query") or "").strip()
+
+    if len(query) < 2:
+        return jsonify({"message": "Query too short"}), 200
+
+    with engine.begin() as conn:
+        save_user_search_query(conn, user_id, query)
+
+    return jsonify({"message": "Search query saved"}), 201
+
+
 @search_bp.route("/search/history", methods=["GET"])
 @token_required
 def search_history():
     user_id = g.user_id
 
     with engine.connect() as conn:
+        # 🚀 P1 FIX #15: Deduplicated history limited to latest 20 items
         history = conn.execute(
             text("""
                 SELECT
-                    history_id,
+                    MAX(history_id) AS history_id,
                     search_query,
-                    searched_at
+                    MAX(searched_at) AS searched_at
                 FROM search_history
                 WHERE user_id = :user_id
+                GROUP BY search_query
                 ORDER BY searched_at DESC
+                LIMIT 20
             """),
-            {
-                "user_id": user_id
-            }
+            {"user_id": user_id}
         ).mappings().all()
 
     history_list = [dict(item) for item in history]
@@ -36909,16 +37830,11 @@ def delete_search_history(history_id):
                 WHERE history_id = :history_id
                 AND user_id = :user_id
             """),
-            {
-                "history_id": history_id,
-                "user_id": user_id
-            }
+            {"history_id": history_id, "user_id": user_id}
         )
 
     if result.rowcount == 0:
-        return jsonify({
-            "error": "Search history not found"
-        }), 404
+        return jsonify({"error": "Search history not found"}), 404
 
     return jsonify({
         "message": "Search history deleted successfully",
@@ -36933,13 +37849,8 @@ def clear_search_history():
 
     with engine.begin() as conn:
         result = conn.execute(
-            text("""
-                DELETE FROM search_history
-                WHERE user_id = :user_id
-            """),
-            {
-                "user_id": user_id
-            }
+            text("DELETE FROM search_history WHERE user_id = :user_id"),
+            {"user_id": user_id}
         )
 
     return jsonify({
@@ -36948,24 +37859,1346 @@ def clear_search_history():
     }), 200
 </file>
 
+<file path="backend/services/recommender.py">
+# File Path: backend/services/recommender.py
+import os
+import joblib
+import threading
+import pandas as pd
+
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+MODELS_DIR = os.path.join(BASE_DIR, "models")
+
+movies = None
+movie_index = None
+movie_id_to_idx = None
+tfidf_matrix = None
+knn = None
+models_available = True
+
+model_lock = threading.Lock()
+
+
+def load_recommender_models():
+    global movies, movie_index, movie_id_to_idx, tfidf_matrix, knn, models_available
+
+    if not models_available:
+        return False
+
+    if movies is None:
+        with model_lock:
+            if movies is None:
+                try:
+                    required_files = [
+                        "movies.pkl",
+                        "movie_index.pkl",
+                        "tfidf_matrix.pkl",
+                        "recommendation_model.pkl"
+                    ]
+                    for fname in required_files:
+                        if not os.path.exists(os.path.join(MODELS_DIR, fname)):
+                            print(f"⚠️ ML Model file missing: {fname}. Using SQL fallback.")
+                            models_available = False
+                            return False
+
+                    print("⏳ Loading ML Recommendation Models...")
+                    movies = joblib.load(os.path.join(MODELS_DIR, "movies.pkl"))
+                    movie_index = joblib.load(os.path.join(MODELS_DIR, "movie_index.pkl"))
+                    tfidf_matrix = joblib.load(os.path.join(MODELS_DIR, "tfidf_matrix.pkl"))
+                    knn = joblib.load(os.path.join(MODELS_DIR, "recommendation_model.pkl"))
+
+                    # 🚀 P3 FIX #26: Build exact movie_id -> row position lookup map
+                    if isinstance(movies, pd.DataFrame) and "movie_id" in movies.columns:
+                        movie_id_to_idx = {
+                            int(mid): pos for pos, mid in enumerate(movies["movie_id"].tolist())
+                        }
+                    else:
+                        movie_id_to_idx = {}
+
+                    print("✅ ML Recommendation Models Loaded Exactly ONCE!")
+                except Exception as e:
+                    print(f"⚠️ Failed to load ML models ({e}). Using SQL fallback.")
+                    models_available = False
+                    return False
+    return True
+
+
+def recommend(movie_name, start=0, limit=20, movie_id=None):
+    global movies, movie_index, movie_id_to_idx, tfidf_matrix, knn
+
+    if not load_recommender_models():
+        return None
+
+    idx = None
+
+    # 🚀 P3 FIX #26: Prefer exact movie_id lookup first so remakes/duplicate titles never collide
+    if movie_id is not None and movie_id_to_idx:
+        idx = movie_id_to_idx.get(int(movie_id))
+
+    # Fallback to title lookup if movie_id was not provided or not found
+    if idx is None:
+        if not movie_name:
+            return None
+        clean_name = movie_name.lower().strip()
+        if clean_name not in movie_index:
+            return None
+        idx = movie_index[clean_name]
+        if isinstance(idx, pd.Series):
+            idx = int(idx.iloc[0])
+
+    distances, indices = knn.kneighbors(
+        tfidf_matrix[idx],
+        n_neighbors=start + limit + 1
+    )
+
+    indices = indices[0][1:]
+    distances = distances[0][1:]
+
+    recommendations = movies.iloc[indices].copy()
+    recommendations["similarity"] = 1 - distances
+
+    return recommendations.iloc[start:start + limit][
+        [
+            "movie_id",
+            "title",
+            "release_year",
+            "avg_rating",
+            "genres",
+            "similarity",
+            "poster_url"
+        ]
+    ].fillna(0)
+</file>
+
+<file path="Frontend_react/src/App.jsx">
+// File Path: Frontend_react/src/App.jsx
+import React from "react";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+
+import Signup from "./pages/signup";
+import GenreSelection from "./pages/GenreSelection";
+import Home from "./pages/Home";
+import MovieDetail from "./pages/MovieDetail";
+import Profile from "./pages/profile";
+import MonthlyReview from "./pages/MonthlyReview";
+import Watchlist from "./pages/Watchlist";
+import ActorProfile from "./pages/ActorProfile";
+import ExploreMovies from "./pages/ExploreMovies";
+import Chat from "./components/Chat";
+import Login from "./pages/login";
+
+// 🚀 Checks both token existence AND JWT expiration timestamp
+const isTokenValid = () => {
+  const token = localStorage.getItem("token");
+  if (!token) return false;
+  try {
+    const base64Url = token.split(".")[1];
+    if (!base64Url) return false;
+    const base64 = base64Url.replace(/-/g, "+").replace(/_/g, "/");
+    const payload = JSON.parse(atob(base64));
+    if (payload.exp && payload.exp * 1000 < Date.now()) {
+      localStorage.clear();
+      return false;
+    }
+    return true;
+  } catch (e) {
+    localStorage.clear();
+    return false;
+  }
+};
+
+const ProtectedRoute = ({ children }) => {
+  if (!isTokenValid()) {
+    return <Navigate to="/login" replace />;
+  }
+  return children;
+};
+
+function App() {
+  return (
+    <BrowserRouter>
+      <Routes>
+        {/* PUBLIC ROUTES */}
+        <Route path="/" element={<Login />} />
+        <Route path="/login" element={<Login />} />
+        <Route path="/signup" element={<Signup />} />
+
+        {/* PRIVATE ROUTES */}
+        <Route path="/genres" element={<ProtectedRoute><GenreSelection /></ProtectedRoute>} />
+        <Route path="/home" element={<ProtectedRoute><Home /></ProtectedRoute>} />
+        <Route path="/movie/:id?" element={<ProtectedRoute><MovieDetail /></ProtectedRoute>} />
+        <Route path="/profile/:id" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
+        <Route path="/monthly-review" element={<ProtectedRoute><MonthlyReview /></ProtectedRoute>} />
+        <Route path="/watchlist" element={<ProtectedRoute><Watchlist /></ProtectedRoute>} />
+        <Route path="/actor/:actorName" element={<ProtectedRoute><ActorProfile /></ProtectedRoute>} />
+        <Route path="/explore" element={<ProtectedRoute><ExploreMovies /></ProtectedRoute>} />
+        <Route path="/messages" element={<ProtectedRoute><Chat /></ProtectedRoute>} />
+
+        {/* 🚀 404 Catch-All Route */}
+        <Route path="*" element={<Navigate to={isTokenValid() ? "/home" : "/login"} replace />} />
+      </Routes>
+    </BrowserRouter>
+  );
+}
+
+export default App;
+</file>
+
+<file path="Frontend_react/src/components/Navbar.jsx">
+// File Path: Frontend_react/src/components/Navbar.jsx
+import React, { useState, useEffect, useRef } from "react";
+import { Link, useNavigate } from "react-router-dom";
+import { API_BASE_URL } from "../config/api";
+import "../styles/navbar.css"; 
+
+export default function Navbar({ onOpenSearch }) {
+  const navigate = useNavigate();
+  const userId = localStorage.getItem("user_id");
+  const username = localStorage.getItem("username");
+  const token = localStorage.getItem("token"); 
+  const profileImage = localStorage.getItem("profile_image");
+  
+  const [showDropdown, setShowDropdown] = useState(false);
+  const dropdownRef = useRef(null);
+
+  const [notifications, setNotifications] = useState([]);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [showNotifDropdown, setShowNotifDropdown] = useState(false);
+  const notifDropdownRef = useRef(null);
+
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+
+  const formatNotifDate = (dateString) => {
+    const date = new Date(dateString);
+    const day = date.getDate();
+    const month = date.toLocaleString('default', { month: 'short' });
+    const suffix = (day % 10 === 1 && day !== 11) ? 'st' :
+                   (day % 10 === 2 && day !== 12) ? 'nd' :
+                   (day % 10 === 3 && day !== 13) ? 'rd' : 'th';
+    return `${day}${suffix} ${month}`;
+  };
+
+  const formatMessage = (msg) => {
+    if (msg.startsWith('@')) {
+      const firstSpace = msg.indexOf(' ');
+      const uname = msg.substring(1, firstSpace);
+      const restOfMsg = msg.substring(firstSpace);
+      return <span style={{ color: "#aaa" }}><strong style={{ color: "#fff" }}>{uname}</strong>{restOfMsg}</span>;
+    }
+    return <span style={{ color: "#aaa" }}>{msg}</span>;
+  };
+
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target)) setShowDropdown(false);
+      if (notifDropdownRef.current && !notifDropdownRef.current.contains(event.target)) setShowNotifDropdown(false);
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  useEffect(() => {
+    if (userId && token) {
+      fetchNotifications();
+    }
+  }, [userId, token]);
+
+  const fetchNotifications = async () => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/notifications`, {
+        headers: { 
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}` 
+        }
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setNotifications(data.notifications || []);
+        setUnreadCount(data.unread_count || 0);
+      }
+    } catch (e) {
+      console.error("Failed to fetch notifications:", e);
+    }
+  };
+
+  const handleNotifClick = async () => {
+    setShowNotifDropdown(!showNotifDropdown);
+    setShowDropdown(false);
+
+    if (!showNotifDropdown && unreadCount > 0) {
+      setUnreadCount(0); 
+      try {
+        await fetch(`${API_BASE_URL}/notifications/read`, {
+          method: "PUT",
+          headers: { 
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${token}` 
+          }
+        });
+        setNotifications((prev) => prev.map(n => ({ ...n, is_read: 1 })));
+      } catch (e) {
+        console.error("Failed to mark notifications read:", e);
+      }
+    }
+  };
+
+  const handleDeleteNotif = async (e, notifId) => {
+    e.stopPropagation(); 
+    setNotifications((prev) => prev.filter((n) => n.notification_id !== notifId));
+    try {
+      await fetch(`${API_BASE_URL}/notifications/${notifId}`, {
+        method: "DELETE",
+        headers: { "Authorization": `Bearer ${token}` }
+      });
+    } catch (error) {
+      console.error("Failed to delete notification:", error);
+    }
+  };
+
+  const handleLogout = () => {
+    localStorage.clear();
+    navigate("/login");
+  };
+
+  return (
+    <nav className="navbar">
+      <div className="navbar-logo-container">
+        <Link to="/home" className="nexus-logo">NEXUS</Link>
+        <span className="nexus-tagline">| The Cinematic Connection</span>
+      </div>
+
+      <button className="mobile-menu-btn" onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)} aria-label="Toggle Menu">
+        <svg viewBox="0 0 24 24" width="24" height="24" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round">
+          <line x1="3" y1="12" x2="21" y2="12"></line>
+          <line x1="3" y1="6" x2="21" y2="6"></line>
+          <line x1="3" y1="18" x2="21" y2="18"></line>
+        </svg>
+      </button>
+
+      <div className={`header-actions ${isMobileMenuOpen ? 'mobile-open' : ''}`}>
+        <Link to="/explore" className="nav-item" title="Explore Movies" onClick={() => setIsMobileMenuOpen(false)}>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"></circle><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"></polygon></svg>
+          <span className="nav-text">Explore</span>
+        </Link>
+
+        <Link to="/watchlist" className="nav-item" title="My Watchlist" onClick={() => setIsMobileMenuOpen(false)}>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"></path></svg>
+          <span className="nav-text">Watchlist</span>
+        </Link>
+
+        <Link to="/messages" className="nav-item" title="Messages" onClick={() => setIsMobileMenuOpen(false)}>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" /></svg>
+          <span className="nav-text">Messages</span>
+        </Link>
+        
+        <button onClick={() => { onOpenSearch(); setIsMobileMenuOpen(false); }} className="nav-item" title="Search">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+          <span className="nav-text">Search</span>
+        </button>
+
+        <div style={{ position: "relative" }} ref={notifDropdownRef}>
+          <div onClick={handleNotifClick} className="nav-item" title="Notifications">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path><path d="M13.73 21a2 2 0 0 1-3.46 0"></path></svg>
+            <span className="nav-text">Alerts</span>
+            {unreadCount > 0 && <span className="notif-dot"></span>}
+          </div>
+
+          {showNotifDropdown && (
+            <div className="custom-dropdown" style={{ width: "360px", maxHeight: "480px", overflowY: "auto", background: "rgba(18, 18, 22, 0.75)", backdropFilter: "blur(16px)", border: "1px solid rgba(255,255,255,0.08)", boxShadow: "0 20px 40px rgba(0,0,0,0.6)" }}>
+              <div style={{ padding: "16px 20px", borderBottom: "1px solid rgba(255,255,255,0.08)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <strong style={{ color: "#fff", fontSize: "16px", letterSpacing: "0.5px" }}>Notifications</strong>
+              </div>
+
+              {notifications.length === 0 ? (
+                <div style={{ padding: "60px 20px", textAlign: "center", color: "#666", fontSize: "14px" }}>No new activity.</div>
+              ) : (
+                notifications.map((notif) => (
+                  <div key={notif.notification_id} style={{ padding: "16px 20px", borderBottom: "1px solid rgba(255,255,255,0.04)", background: notif.is_read ? "transparent" : "rgba(255, 255, 255, 0.03)", display: "flex", gap: "14px", alignItems: "flex-start", transition: "0.2s", position: "relative" }}>
+                    <div style={{ position: "relative" }}>
+                      <div style={{ width: "36px", height: "36px", borderRadius: "50%", background: "#2a2a35", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "14px", color: "#fff", fontWeight: "bold" }}>
+                        {notif.message.startsWith('@') ? notif.message.charAt(1).toUpperCase() : 'M'}
+                      </div>
+                      <div style={{ position: "absolute", bottom: "-2px", right: "-2px", background: notif.type === 'like' ? '#ff4757' : notif.type === 'comment' ? '#3742fa' : '#2ed573', width: "14px", height: "14px", borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "8px", border: "2px solid #14141a" }}>
+                        {notif.type === 'like' ? '❤' : notif.type === 'comment' ? '💬' : '👤'}
+                      </div>
+                    </div>
+                    
+                    <div style={{ flex: 1, paddingRight: "16px" }}>
+                      <p style={{ margin: "0 0 4px 0", fontSize: "14px", lineHeight: "1.4" }}>{formatMessage(notif.message)}</p>
+                      <span style={{ fontSize: "12px", color: "#666", fontWeight: "500" }}>{formatNotifDate(notif.created_at)}</span>
+                    </div>
+
+                    <button onClick={(e) => handleDeleteNotif(e, notif.notification_id)} style={{ position: "absolute", top: "16px", right: "16px", background: "transparent", border: "none", color: "#444", fontSize: "14px", cursor: "pointer", padding: "4px", transition: "0.2s" }} onMouseEnter={(e) => e.target.style.color = "#ff4757"} onMouseLeave={(e) => e.target.style.color = "#444"}>✕</button>
+                  </div>
+                ))
+              )}
+            </div>
+          )}
+        </div>
+
+        {userId && (
+          <div style={{ position: "relative" }} ref={dropdownRef}>
+            <div onClick={() => { setShowDropdown(!showDropdown); setShowNotifDropdown(false); }} className="nav-item">
+              <div className="profile-circle" style={{ background: profileImage ? "transparent" : "linear-gradient(135deg, var(--primary-accent), #47b8ff)", overflow: "hidden" }}>
+                {profileImage ? <img src={profileImage} alt="profile" style={{width: "100%", height: "100%", objectFit: "cover"}} /> : (username ? username.charAt(0).toUpperCase() : "U")}
+              </div>
+              <span className="nav-text">Profile</span>
+            </div>
+
+            {showDropdown && (
+              <div className="custom-dropdown" style={{ width: "200px" }}>
+                <div style={{ padding: "12px 16px", borderBottom: "1px solid rgba(255,255,255,0.06)", fontSize: "13px", color: "#888" }}>
+                  Signed in as <strong style={{ color: "#fff" }}>@{username || "user"}</strong>
+                </div>
+                <Link to={`/profile/${userId}`} onClick={() => setShowDropdown(false)} className="dropdown-item">👤 My Profile</Link>
+                <Link to={`/monthly-review`} onClick={() => setShowDropdown(false)} className="dropdown-item">📊 Monthly Analytics</Link>
+                <div className="dropdown-divider"></div>
+                <button onClick={handleLogout} className="dropdown-item logout-btn">🚪 Log Out</button>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </nav>
+  );
+}
+</file>
+
+<file path="Frontend_react/src/services/homeService.js">
+// File Path: Frontend_react/src/services/homeService.js
+import { API_BASE_URL } from "../config/api";
+
+export async function getHomeData() {
+  const token = localStorage.getItem("token");
+
+  if (!token) {
+    throw new Error("User is not logged in");
+  }
+
+  const response = await fetch(`${API_BASE_URL}/home`, {
+    method: "GET",
+    headers: {
+      "Authorization": `Bearer ${token}`
+    }
+  });
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    throw new Error(data.error || "Failed to load home data");
+  }
+
+  return data;
+}
+
+// Movie Detail fetch karne ka function
+export const getMovieDetail = async (movieId) => {
+  try {
+    const response = await fetch(`${API_BASE_URL}/movie/${movieId}`);
+    if (!response.ok) {
+      throw new Error("Failed to fetch movie details");
+    }
+    return await response.json();
+  } catch (error) {
+    console.error("API Error in getMovieDetail:", error);
+    return null;
+  }
+};
+
+// Toggle Review Like
+export const toggleReviewLike = async (reviewId) => {
+  try {
+    const token = localStorage.getItem("token");
+    const response = await fetch(`${API_BASE_URL}/reviews/${reviewId}/like`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${token}`
+      }
+    });
+
+    if (!response.ok) throw new Error("Failed to toggle like");
+    return await response.json();
+  } catch (error) {
+    console.error("API Error in toggleReviewLike:", error);
+    return null;
+  }
+};
+
+// Post a new review
+export const postReview = async (movieId, reviewText, rating, isSpoiler = false) => {
+  try {
+    const token = localStorage.getItem("token");
+    const response = await fetch(`${API_BASE_URL}/reviews/${movieId}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${token}`
+      },
+      body: JSON.stringify({
+        review_text: reviewText,
+        rating: rating,
+        is_spoiler: Boolean(isSpoiler)
+      })
+    });
+
+    if (!response.ok) throw new Error("Failed to post review");
+    return await response.json();
+  } catch (error) {
+    console.error("API Error in postReview:", error);
+    return null;
+  }
+};
+
+// Get all reviews for a movie
+export const getMovieReviews = async (movieId) => {
+  try {
+    const token = localStorage.getItem("token");
+    const response = await fetch(`${API_BASE_URL}/movie/${movieId}/reviews`, {
+      method: "GET",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${token}`
+      }
+    });
+
+    if (!response.ok) throw new Error("Failed to fetch reviews");
+    return await response.json();
+  } catch (error) {
+    console.error("API Error in getMovieReviews:", error);
+    return { reviews: [] };
+  }
+};
+
+// Get User Profile Data
+export const getUserProfile = async (userId) => {
+  try {
+    const token = localStorage.getItem("token");
+    const loggedInUserId = localStorage.getItem("user_id");
+    const isMyOwnProfile = String(userId) === String(loggedInUserId);
+
+    const response = await fetch(`${API_BASE_URL}/profile/${userId}`, {
+      method: "GET",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${token}`
+      }
+    });
+
+    if (!response.ok) throw new Error("Failed to fetch user profile");
+    const data = await response.json();
+
+    const userObj = data.user ? data.user : data;
+
+    if (isMyOwnProfile && !userObj.profile_image) {
+      const savedAvatar = localStorage.getItem("profile_image");
+      if (savedAvatar) {
+        userObj.profile_image = savedAvatar;
+      }
+    } else if (userObj.profile_image && isMyOwnProfile) {
+      localStorage.setItem("profile_image", userObj.profile_image);
+    }
+
+    return { ...data, user: userObj };
+  } catch (error) {
+    console.error("API Error in getUserProfile:", error);
+    return null;
+  }
+};
+
+// Get Watchlist
+export const getWatchlist = async () => {
+  try {
+    const token = localStorage.getItem("token");
+    const res = await fetch(`${API_BASE_URL}/watchlist`, {
+      headers: { "Authorization": `Bearer ${token}` }
+    });
+    if (!res.ok) throw new Error("Failed to fetch watchlist");
+    const data = await res.json();
+    return data.watchlist || [];
+  } catch (error) {
+    console.error("API Error in getWatchlist:", error);
+    return [];
+  }
+};
+
+// Add to Watchlist
+export const addToWatchlist = async (movieId) => {
+  try {
+    const token = localStorage.getItem("token");
+    const res = await fetch(`${API_BASE_URL}/watchlist/${movieId}`, {
+      method: "POST",
+      headers: { "Authorization": `Bearer ${token}` }
+    });
+
+    if (res.status === 409) {
+      return false;
+    }
+
+    return res.ok;
+  } catch (error) {
+    console.error("API Error in addToWatchlist:", error);
+    return false;
+  }
+};
+
+// Remove from Watchlist
+export const removeFromWatchlist = async (movieId) => {
+  try {
+    const token = localStorage.getItem("token");
+    const res = await fetch(`${API_BASE_URL}/watchlist/${movieId}`, {
+      method: "DELETE",
+      headers: { "Authorization": `Bearer ${token}` }
+    });
+    return res.ok;
+  } catch (error) {
+    console.error("API Error in removeFromWatchlist:", error);
+    return false;
+  }
+};
+
+// Global Search (Movies, Actors & Users) - Does not spam history on debounce
+export const performSearch = async (query, type = "movie", save = false) => {
+  if (!query) return [];
+  try {
+    const token = localStorage.getItem("token");
+    const saveParam = save ? "&save=1" : "";
+    const res = await fetch(
+      `${API_BASE_URL}/search?q=${encodeURIComponent(query)}&type=${encodeURIComponent(type)}${saveParam}`,
+      {
+        headers: { "Authorization": `Bearer ${token}` }
+      }
+    );
+    if (!res.ok) throw new Error("Search failed");
+    return await res.json();
+  } catch (error) {
+    console.error("API Error in performSearch:", error);
+    return [];
+  }
+};
+
+// 🚀 P1 FIX #15: Save search query explicitly only on Enter or Result Click
+export const saveSearchQuery = async (query) => {
+  const clean = (query || "").trim();
+  if (clean.length < 2) return false;
+  try {
+    const token = localStorage.getItem("token");
+    if (!token) return false;
+    const res = await fetch(`${API_BASE_URL}/search/history`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${token}`
+      },
+      body: JSON.stringify({ query: clean })
+    });
+    return res.ok;
+  } catch (error) {
+    return false;
+  }
+};
+
+// Get Search History
+export const getSearchHistory = async () => {
+  try {
+    const token = localStorage.getItem("token");
+    const res = await fetch(`${API_BASE_URL}/search/history`, {
+      headers: { "Authorization": `Bearer ${token}` }
+    });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return data.history || [];
+  } catch (error) {
+    return [];
+  }
+};
+
+// Clear Search History
+export const clearSearchHistory = async () => {
+  try {
+    const token = localStorage.getItem("token");
+    const res = await fetch(`${API_BASE_URL}/search/history`, {
+      method: "DELETE",
+      headers: { "Authorization": `Bearer ${token}` }
+    });
+    return res.ok;
+  } catch (error) {
+    return false;
+  }
+};
+
+export const getUserAnalytics = async (userId) => {
+  try {
+    const res = await fetch(`${API_BASE_URL}/profile/${userId}/analytics`);
+    if (!res.ok) throw new Error("Analytics failed");
+    return await res.json();
+  } catch (error) {
+    console.error("Error fetching analytics:", error);
+    return null;
+  }
+};
+
+export const getUserCollections = async (userId) => {
+  try {
+    const res = await fetch(`${API_BASE_URL}/user/${userId}/collections`);
+    if (!res.ok) return [];
+    return await res.json();
+  } catch (error) {
+    return [];
+  }
+};
+
+export const createCollection = async (title, description) => {
+  try {
+    const token = localStorage.getItem("token");
+    const res = await fetch(`${API_BASE_URL}/collections`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${token}`
+      },
+      body: JSON.stringify({ title, description })
+    });
+    return res.ok;
+  } catch (error) {
+    return false;
+  }
+};
+
+export const addMovieToCollection = async (collectionId, movieId) => {
+  try {
+    const token = localStorage.getItem("token");
+    const res = await fetch(`${API_BASE_URL}/collections/${collectionId}/movies`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${token}`
+      },
+      body: JSON.stringify({ movie_id: movieId })
+    });
+    const data = await res.json();
+    return { success: res.ok, message: data.message || data.error };
+  } catch (error) {
+    return { success: false, message: "Network error" };
+  }
+};
+
+export const getCollectionDetails = async (collectionId) => {
+  try {
+    const res = await fetch(`${API_BASE_URL}/collections/${collectionId}`);
+    if (!res.ok) return null;
+    return await res.json();
+  } catch (error) {
+    return null;
+  }
+};
+
+export const searchUsers = async (query) => {
+  try {
+    const res = await fetch(`${API_BASE_URL}/users/search?q=${encodeURIComponent(query || "")}`);
+    if (!res.ok) return [];
+    return await res.json();
+  } catch (error) {
+    return [];
+  }
+};
+
+export const toggleFollowUser = async (targetUserId) => {
+  try {
+    const token = localStorage.getItem("token");
+    const res = await fetch(`${API_BASE_URL}/user/${targetUserId}/follow`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${token}`
+      }
+    });
+    return await res.json();
+  } catch (error) {
+    return null;
+  }
+};
+
+export const getUserFollowStats = async (userId) => {
+  try {
+    const res = await fetch(`${API_BASE_URL}/user/${userId}/stats`);
+    if (!res.ok) return { followers_count: 0, following_count: 0 };
+    return await res.json();
+  } catch (error) {
+    return { followers_count: 0, following_count: 0 };
+  }
+};
+
+export const getActorMovies = async (actorName, page = 1, sortBy = "year") => {
+  try {
+    const response = await fetch(
+      `${API_BASE_URL}/actor/${encodeURIComponent(actorName)}?page=${page}&sort_by=${encodeURIComponent(sortBy)}`
+    );
+    if (!response.ok) throw new Error("Failed to fetch actor movies");
+    return await response.json();
+  } catch (error) {
+    console.error("API Error in getActorMovies:", error);
+    return [];
+  }
+};
+
+export const getFollowersList = async (userId) => {
+  try {
+    const res = await fetch(`${API_BASE_URL}/user/${userId}/followers`);
+    if (!res.ok) return [];
+    return await res.json();
+  } catch (error) {
+    return [];
+  }
+};
+
+export const getFollowingList = async (userId) => {
+  try {
+    const res = await fetch(`${API_BASE_URL}/user/${userId}/following`);
+    if (!res.ok) return [];
+    return await res.json();
+  } catch (error) {
+    return [];
+  }
+};
+
+export const getUserReviews = async (userId) => {
+  try {
+    const response = await fetch(`${API_BASE_URL}/user/${userId}/reviews`);
+    if (!response.ok) throw new Error("Failed to fetch user reviews");
+    return await response.json();
+  } catch (error) {
+    console.error("API Error in getUserReviews:", error);
+    return [];
+  }
+};
+
+export const getMovieTrailerKey = async (title, year) => {
+  try {
+    const res = await fetch(
+      `${API_BASE_URL}/movie/trailer?title=${encodeURIComponent(title)}&year=${encodeURIComponent(year || "")}`
+    );
+    const data = await res.json();
+    if (res.ok && data.videoId) {
+      return data.videoId;
+    }
+    return null;
+  } catch (error) {
+    console.error("Trailer API Fetch Error:", error);
+    return null;
+  }
+};
+
+// Get Surprise Movie
+export const getSurpriseMovie = async () => {
+  try {
+    const token = localStorage.getItem("token");
+    const response = await fetch(`${API_BASE_URL}/movie/surprise`, {
+      method: "GET",
+      headers: {
+        "Authorization": `Bearer ${token}`
+      }
+    });
+    if (!response.ok) throw new Error("Failed to fetch surprise");
+    return await response.json();
+  } catch (error) {
+    console.error("API Error in getSurpriseMovie:", error);
+    return null;
+  }
+};
+</file>
+
+<file path="backend/routes/review.py">
+# File Path: backend/routes/review.py
+from flask import Blueprint, jsonify, request, g, current_app
+from sqlalchemy import text, bindparam
+from backend.database import engine
+from backend.middleware.auth_middleware import token_required
+
+review_bp = Blueprint("review", __name__)
+
+DATASET_BASE_WEIGHT = 10
+
+
+def init_base_ratings_table():
+    """Ensures movie_base_ratings table exists once at startup (outside request transactions)."""
+    try:
+        with engine.begin() as conn:
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS movie_base_ratings (
+                    movie_id BIGINT PRIMARY KEY,
+                    base_rating DECIMAL(3,2)
+                )
+            """))
+    except Exception as e:
+        print(f"Base ratings table init note: {e}")
+
+init_base_ratings_table()
+
+
+def validate_rating_value(rating_val):
+    """Validates rating is a float between 0.5 and 5.0 in 0.5 increments."""
+    if rating_val is None or isinstance(rating_val, bool):
+        return None
+    try:
+        r = float(rating_val)
+    except (ValueError, TypeError):
+        return None
+    if r < 0.5 or r > 5.0:
+        return None
+    if round(r * 2) != (r * 2):
+        return None
+    return round(r, 1)
+
+
+def ensure_base_rating_saved(conn, movie_id):
+    """Saves the original dataset avg_rating before any user review modifies it (No DDL inside transaction)."""
+    conn.execute(text("""
+        INSERT IGNORE INTO movie_base_ratings (movie_id, base_rating)
+        SELECT movie_id, avg_rating FROM movies WHERE movie_id = :movie_id
+    """), {"movie_id": movie_id})
+
+
+def sync_movie_avg_rating(conn, movie_id):
+    """Combines original dataset rating with user ratings from reviews and ratings tables."""
+    ensure_base_rating_saved(conn, movie_id)
+
+    base_row = conn.execute(
+        text("SELECT base_rating FROM movie_base_ratings WHERE movie_id = :movie_id"),
+        {"movie_id": movie_id}
+    ).fetchone()
+    base_rating = float(base_row[0]) if (base_row and base_row[0] is not None) else None
+
+    # 🚀 P1 FIX #11: Combine ratings from reviews and standalone ratings table per user
+    user_ratings_rows = conn.execute(text("""
+        SELECT rating FROM reviews 
+        WHERE movie_id = :movie_id AND rating IS NOT NULL AND rating > 0
+        UNION ALL
+        SELECT r.rating FROM ratings r
+        WHERE r.movie_id = :movie_id AND r.rating IS NOT NULL AND r.rating > 0
+          AND NOT EXISTS (
+              SELECT 1 FROM reviews rev 
+              WHERE rev.movie_id = r.movie_id AND rev.user_id = r.user_id
+          )
+    """), {"movie_id": movie_id}).fetchall()
+
+    user_ratings = [float(r[0]) for r in user_ratings_rows]
+
+    if base_rating is not None and base_rating > 0:
+        if len(user_ratings) > 0:
+            total_score = (base_rating * DATASET_BASE_WEIGHT) + sum(user_ratings)
+            total_votes = DATASET_BASE_WEIGHT + len(user_ratings)
+            new_avg = round(total_score / total_votes, 2)
+        else:
+            new_avg = base_rating
+    else:
+        new_avg = round(sum(user_ratings) / len(user_ratings), 2) if user_ratings else None
+
+    conn.execute(
+        text("UPDATE movies SET avg_rating = :new_avg WHERE movie_id = :movie_id"),
+        {"new_avg": new_avg, "movie_id": movie_id}
+    )
+
+
+# Add or Update review (Smart Upsert with P0 #4 Validation)
+@review_bp.route("/reviews/<int:movie_id>", methods=["POST"])
+@token_required
+def add_review(movie_id):
+    user_id = g.user_id
+    data = request.get_json() or {}
+
+    raw_text = data.get("review_text")
+    if not isinstance(raw_text, str) or not raw_text.strip():
+        return jsonify({"error": "Review text is required"}), 400
+
+    review_text = raw_text.strip()
+    if len(review_text) > 2000:
+        return jsonify({"error": "Review text cannot exceed 2000 characters"}), 400
+
+    # 🚀 P0 FIX #4: Strict rating range (0.5 to 5.0, step 0.5) & boolean spoiler check
+    rating = validate_rating_value(data.get("rating"))
+    if rating is None:
+        return jsonify({"error": "Rating must be between 0.5 and 5.0 in 0.5 steps"}), 400
+
+    is_spoiler = bool(data.get("is_spoiler", False))
+
+    with engine.begin() as conn:
+        movie = conn.execute(
+            text("SELECT movie_id FROM movies WHERE movie_id = :movie_id"),
+            {"movie_id": movie_id}
+        ).first()
+
+        if not movie:
+            return jsonify({"error": "Movie not found"}), 404
+
+        ensure_base_rating_saved(conn, movie_id)
+
+        existing_review = conn.execute(
+            text("""
+                SELECT review_id 
+                FROM reviews 
+                WHERE user_id = :user_id AND movie_id = :movie_id
+            """),
+            {"user_id": user_id, "movie_id": movie_id}
+        ).first()
+
+        if existing_review:
+            review_id = existing_review.review_id
+            conn.execute(
+                text("""
+                    UPDATE reviews
+                    SET review_text = :review_text, rating = :rating, is_spoiler = :is_spoiler
+                    WHERE review_id = :review_id
+                """),
+                {
+                    "review_text": review_text,
+                    "rating": rating,
+                    "is_spoiler": is_spoiler,
+                    "review_id": review_id
+                }
+            )
+            message = "Review updated successfully"
+        else:
+            result = conn.execute(
+                text("""
+                    INSERT INTO reviews (user_id, movie_id, review_text, rating, is_spoiler) 
+                    VALUES (:user_id, :movie_id, :review_text, :rating, :is_spoiler)
+                """),
+                {
+                    "user_id": user_id,
+                    "movie_id": movie_id,
+                    "review_text": review_text,
+                    "rating": rating,
+                    "is_spoiler": is_spoiler
+                }
+            )
+            review_id = result.lastrowid
+            message = "Review added successfully"
+
+        sync_movie_avg_rating(conn, movie_id)
+
+    return jsonify({
+        "message": message,
+        "review_id": review_id,
+        "movie_id": movie_id,
+        "review_text": review_text,
+        "rating": rating,
+        "is_spoiler": is_spoiler
+    }), 201
+
+
+# Get reviews for a movie (Fixed table name review_comments & N+1 #12)
+@review_bp.route("/reviews/<int:movie_id>", methods=["GET"])
+@token_required
+def get_reviews(movie_id):
+    with engine.connect() as conn:
+        movie = conn.execute(
+            text("SELECT movie_id, title FROM movies WHERE movie_id = :movie_id"),
+            {"movie_id": movie_id}
+        ).first()
+
+        if movie is None:
+            return jsonify({"error": "Movie not found"}), 404
+
+        reviews = conn.execute(
+            text("""
+                SELECT
+                    r.review_id,
+                    r.user_id,
+                    u.username,
+                    r.review_text,
+                    r.rating,
+                    r.is_spoiler,
+                    r.likes,
+                    r.created_at,
+                    CASE
+                        WHEN rl.user_id IS NOT NULL THEN TRUE
+                        ELSE FALSE
+                    END AS is_liked
+                FROM reviews r
+                JOIN users u ON r.user_id = u.user_id
+                LEFT JOIN review_likes rl
+                    ON r.review_id = rl.review_id
+                    AND rl.user_id = :user_id
+                WHERE r.movie_id = :movie_id
+                ORDER BY r.created_at DESC
+            """),
+            {"movie_id": movie_id, "user_id": g.user_id}
+        ).mappings().all()
+
+        review_list = [dict(row) for row in reviews]
+
+        if review_list:
+            review_ids = tuple(r["review_id"] for r in review_list)
+            comments = conn.execute(
+                text("""
+                    SELECT rc.comment_id, rc.review_id, rc.user_id, rc.comment_text, rc.created_at, u.username
+                    FROM review_comments rc
+                    JOIN users u ON rc.user_id = u.user_id
+                    WHERE rc.review_id IN :rids
+                    ORDER BY rc.created_at ASC
+                """).bindparams(bindparam("rids", expanding=True)),
+                {"rids": review_ids}
+            ).mappings().all()
+
+            comments_by_review = {}
+            for c in comments:
+                comments_by_review.setdefault(c["review_id"], []).append(dict(c))
+
+            for r_dict in review_list:
+                r_dict["comments"] = comments_by_review.get(r_dict["review_id"], [])
+
+    return jsonify({
+        "movie_id": movie.movie_id,
+        "title": movie.title,
+        "total_reviews": len(review_list),
+        "reviews": review_list
+    }), 200
+
+
+# Update user's own review (Direct Edit with P0 #4 Validation)
+@review_bp.route("/reviews/<int:review_id>", methods=["PUT"])
+@token_required
+def update_review(review_id):
+    user_id = g.user_id
+    data = request.get_json() or {}
+
+    raw_text = data.get("review_text")
+    if not isinstance(raw_text, str) or not raw_text.strip():
+        return jsonify({"error": "Review text is required"}), 400
+
+    review_text = raw_text.strip()
+    if len(review_text) > 2000:
+        return jsonify({"error": "Review text cannot exceed 2000 characters"}), 400
+
+    rating = None
+    if "rating" in data and data.get("rating") is not None:
+        rating = validate_rating_value(data.get("rating"))
+        if rating is None:
+            return jsonify({"error": "Rating must be between 0.5 and 5.0 in 0.5 steps"}), 400
+
+    is_spoiler = bool(data.get("is_spoiler")) if "is_spoiler" in data else None
+
+    with engine.begin() as conn:
+        review = conn.execute(
+            text("""
+                SELECT review_id, movie_id
+                FROM reviews
+                WHERE review_id = :review_id AND user_id = :user_id
+            """),
+            {"review_id": review_id, "user_id": user_id}
+        ).first()
+
+        if review is None:
+            return jsonify({"error": "Review not found or you are not allowed to edit it"}), 404
+
+        ensure_base_rating_saved(conn, review.movie_id)
+
+        update_query = "UPDATE reviews SET review_text = :review_text"
+        params = {
+            "review_text": review_text,
+            "review_id": review_id,
+            "user_id": user_id
+        }
+
+        if rating is not None:
+            update_query += ", rating = :rating"
+            params["rating"] = rating
+
+        if is_spoiler is not None:
+            update_query += ", is_spoiler = :is_spoiler"
+            params["is_spoiler"] = is_spoiler
+
+        update_query += " WHERE review_id = :review_id AND user_id = :user_id"
+        conn.execute(text(update_query), params)
+
+        sync_movie_avg_rating(conn, review.movie_id)
+
+    return jsonify({
+        "message": "Review updated successfully",
+        "review_id": review_id,
+        "review_text": review_text
+    }), 200
+
+
+# Delete user's own review
+@review_bp.route("/reviews/<int:review_id>", methods=["DELETE"])
+@token_required
+def delete_review(review_id):
+    user_id = g.user_id
+
+    with engine.begin() as conn:
+        review = conn.execute(
+            text("""
+                SELECT review_id, movie_id
+                FROM reviews
+                WHERE review_id = :review_id AND user_id = :user_id
+            """),
+            {"review_id": review_id, "user_id": user_id}
+        ).first()
+
+        if review is None:
+            return jsonify({"error": "Review not found or you are not allowed to delete it"}), 404
+
+        movie_id = review.movie_id
+        ensure_base_rating_saved(conn, movie_id)
+
+        conn.execute(
+            text("DELETE FROM reviews WHERE review_id = :review_id AND user_id = :user_id"),
+            {"review_id": review_id, "user_id": user_id}
+        )
+
+        sync_movie_avg_rating(conn, movie_id)
+
+    return jsonify({
+        "message": "Review deleted successfully",
+        "review_id": review_id
+    }), 200
+
+
+# Toggle Like (With Notification Deduplication #14)
+@review_bp.route("/reviews/<int:review_id>/like", methods=["POST"])
+@token_required
+def toggle_like_review(review_id):
+    user_id = g.user_id
+
+    try:
+        with engine.begin() as conn:
+            review = conn.execute(
+                text("""
+                    SELECT r.review_id, r.user_id as owner_id, r.likes, m.title 
+                    FROM reviews r
+                    JOIN movies m ON r.movie_id = m.movie_id 
+                    WHERE r.review_id = :r
+                """),
+                {"r": review_id}
+            ).mappings().first()
+
+            if not review:
+                return jsonify({"error": "Review not found"}), 404
+
+            existing_like = conn.execute(
+                text("SELECT review_id FROM review_likes WHERE review_id = :r AND user_id = :u"),
+                {"r": review_id, "u": user_id}
+            ).first()
+
+            if existing_like:
+                conn.execute(
+                    text("DELETE FROM review_likes WHERE review_id = :r AND user_id = :u"),
+                    {"r": review_id, "u": user_id}
+                )
+                conn.execute(
+                    text("UPDATE reviews SET likes = GREATEST(likes - 1, 0) WHERE review_id = :r"),
+                    {"r": review_id}
+                )
+                action = "unliked"
+                new_likes = max(0, (review["likes"] or 0) - 1)
+            else:
+                conn.execute(
+                    text("INSERT INTO review_likes (review_id, user_id) VALUES (:r, :u)"),
+                    {"r": review_id, "u": user_id}
+                )
+                conn.execute(
+                    text("UPDATE reviews SET likes = COALESCE(likes, 0) + 1 WHERE review_id = :r"),
+                    {"r": review_id}
+                )
+
+                if review["owner_id"] != user_id:
+                    sender = conn.execute(
+                        text("SELECT username FROM users WHERE user_id = :u"),
+                        {"u": user_id}
+                    ).mappings().first()
+                    sender_name = sender["username"] if sender else "Someone"
+                    notif_msg = f"@{sender_name} liked your review on {review['title']}."
+
+                    # 🚀 P1 FIX #14: Deduplicate like notification
+                    already_notified = conn.execute(
+                        text("""
+                            SELECT 1 FROM notifications 
+                            WHERE user_id = :owner AND sender_id = :sender AND message = :msg AND is_read = 0
+                            LIMIT 1
+                        """),
+                        {"owner": review["owner_id"], "sender": user_id, "msg": notif_msg}
+                    ).first()
+
+                    if not already_notified:
+                        conn.execute(text("""
+                            INSERT INTO notifications (user_id, sender_id, message, type) 
+                            VALUES (:owner, :sender, :msg, 'like')
+                        """), {
+                            "owner": review["owner_id"],
+                            "sender": user_id,
+                            "msg": notif_msg
+                        })
+
+                action = "liked"
+                new_likes = (review["likes"] or 0) + 1
+
+        return jsonify({
+            "message": f"Review {action} successfully",
+            "liked": action == "liked",
+            "likes_count": new_likes
+        }), 200
+
+    except Exception as e:
+        current_app.logger.error(f"LIKE TOGGLE ERROR: {e}")
+        return jsonify({"error": "Failed to toggle like"}), 500
+
+
+# Get User Profile Details (🚀 FIXED: Added profile_image and bio to SELECT)
+@review_bp.route("/profile/<int:target_user_id>", methods=["GET"])
+@token_required
+def get_user_profile(target_user_id):
+    with engine.connect() as conn:
+        user_info = conn.execute(
+            text("SELECT user_id, username, profile_image, bio, created_at FROM users WHERE user_id = :u"),
+            {"u": target_user_id}
+        ).mappings().first()
+
+        if not user_info:
+            return jsonify({"error": "User not found"}), 404
+
+        user_reviews = conn.execute(
+            text("""
+                SELECT 
+                    r.review_id, r.movie_id, r.review_text, r.rating, r.likes, r.created_at, r.is_spoiler,
+                    m.title, m.poster_url, m.release_year
+                FROM reviews r
+                JOIN movies m ON r.movie_id = m.movie_id
+                WHERE r.user_id = :u
+                ORDER BY r.created_at DESC
+            """),
+            {"u": target_user_id}
+        ).mappings().all()
+
+    return jsonify({
+        "user": dict(user_info),
+        "total_reviews": len(user_reviews),
+        "reviews": [dict(row) for row in user_reviews]
+    }), 200
+</file>
+
 <file path="Frontend_react/src/pages/MovieDetail.jsx">
+// File Path: Frontend_react/src/pages/MovieDetail.jsx
 import React, { useState, useEffect, useRef } from "react";
 import { useParams, Link } from "react-router-dom";
-import { 
-  getMovieDetail, 
-  toggleReviewLike, 
-  postReview, 
-  getMovieReviews, 
-  addToWatchlist, 
-  getUserCollections, 
-  createCollection, 
+import { io } from "socket.io-client";
+import { API_BASE_URL } from "../config/api";
+import {
+  getMovieDetail,
+  toggleReviewLike,
+  postReview,
+  getMovieReviews,
+  addToWatchlist,
+  getUserCollections,
+  createCollection,
   addMovieToCollection,
   getMovieTrailerKey
 } from "../services/homeService";
 import SearchModal from "../components/SearchModal";
 import Navbar from "../components/Navbar";
-import "../styles/movieDetail.css";
 import CinematicLoader from "../components/CinematicLoader";
+import "../styles/movieDetail.css";
 
 export default function MovieDetail() {
   const { id } = useParams();
@@ -36989,35 +39222,34 @@ export default function MovieDetail() {
 
   const [activeCommentReviewId, setActiveCommentReviewId] = useState(null);
   const [commentInput, setCommentInput] = useState("");
-  const [isSpoiler, setIsSpoiler] = useState(false); 
-  const [sortBy, setSortBy] = useState("recent"); 
-  const [revealedSpoilers, setRevealedSpoilers] = useState({}); 
+  const [isSpoiler, setIsSpoiler] = useState(false);
+  const [sortBy, setSortBy] = useState("recent");
+  const [revealedSpoilers, setRevealedSpoilers] = useState({});
 
-  // 🌟 TRAILER MODAL STATES
   const [trailerKey, setTrailerKey] = useState(null);
   const [isTrailerOpen, setIsTrailerOpen] = useState(false);
 
-  // ✈️ SHARE MOVIE STATES
   const [showShareModal, setShowShareModal] = useState(false);
+  const [shareFriendId, setShareFriendId] = useState(null);
   const [shareUsername, setShareUsername] = useState("");
   const [shareMessage, setShareMessage] = useState("Hey, check out this movie! I think you'll love it.");
   const [shareStatus, setShareStatus] = useState(null);
-  const [allUsers, setAllUsers] = useState([]); // All users state
-
-  const handleOpenCollectionModal = async () => {
-    const userId = localStorage.getItem("user_id");
-    if (!userId) {
-      alert("Please login first!");
-      return;
-    }
-    const cols = await getUserCollections(userId);
-    setUserCollections(cols);
-    setShowColModal(true);
-  };
+  const [allFriends, setAllFriends] = useState([]);
 
   const reviewSectionRef = useRef(null);
   const currentUsername = localStorage.getItem("username");
   const token = localStorage.getItem("token");
+  const myUserId = Number(localStorage.getItem("user_id"));
+
+  const handleOpenCollectionModal = async () => {
+    if (!myUserId) {
+      alert("Please login first!");
+      return;
+    }
+    const cols = await getUserCollections(myUserId);
+    setUserCollections(cols);
+    setShowColModal(true);
+  };
 
   const getInitials = (name) => {
     if (!name || typeof name !== "string") return "U";
@@ -37041,21 +39273,19 @@ export default function MovieDetail() {
     if (success) {
       setNewColTitle("");
       setCreatingNew(false);
-      const userId = localStorage.getItem("user_id");
-      const cols = await getUserCollections(userId);
+      const cols = await getUserCollections(myUserId);
       setUserCollections(cols);
     }
   };
 
-  // 🚀 Fetch Users for Suggestions
   useEffect(() => {
     if (showShareModal && token) {
-      fetch("http://127.0.0.1:5000/users", {
+      fetch(`${API_BASE_URL}/get_friends`, {
         headers: { "Authorization": `Bearer ${token}` }
       })
-      .then(res => res.json())
-      .then(data => setAllUsers(data.users || []))
-      .catch(err => console.log("Failed to load users", err));
+        .then((res) => res.json())
+        .then((data) => setAllFriends(data.friends || []))
+        .catch((err) => console.log("Failed to load friends", err));
     }
   }, [showShareModal, token]);
 
@@ -37074,54 +39304,60 @@ export default function MovieDetail() {
     }
   };
 
-  const handleShareMovie = async () => {
-    if (!shareUsername.trim()) {
-      setShareStatus({ type: "error", msg: "Please enter a username!" });
+  const handleShareMovie = () => {
+    if (!shareFriendId) {
+      setShareStatus({ type: "error", msg: "Please select a friend from the suggestions!" });
       return;
     }
-    
-    setShareStatus({ type: "loading", msg: "Sending..." });
-    try {
-      const res = await fetch("http://127.0.0.1:5000/share/movie", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          username: shareUsername,
-          movie_id: id,
-          message: shareMessage
-        })
-      });
-      
-      const data = await res.json();
-      if (res.ok) {
-        setShareStatus({ type: "success", msg: data.message });
+    if (!token) {
+      setShareStatus({ type: "error", msg: "Please login to share!" });
+      return;
+    }
+
+    setShareStatus({ type: "loading", msg: "Sending to chat..." });
+    const tempSocket = io(API_BASE_URL);
+
+    const sharePayload = JSON.stringify({
+      isMovieShare: true,
+      movieId: Number(id),
+      movieTitle: movie.title,
+      posterUrl: movie.poster_url,
+      userMessage: shareMessage.trim()
+    });
+
+    tempSocket.emit("send_message", {
+      token: token,
+      sender_id: myUserId,
+      receiver_id: shareFriendId,
+      message: sharePayload
+    }, (response) => {
+      if (response && response.success) {
+        setShareStatus({ type: "success", msg: "Sent to Chat! 🚀" });
         setTimeout(() => {
+          tempSocket.disconnect();
           setShowShareModal(false);
           setShareStatus(null);
           setShareUsername("");
+          setShareFriendId(null);
           setShareMessage("Hey, check out this movie! I think you'll love it.");
-        }, 2000);
+        }, 1500);
       } else {
-        setShareStatus({ type: "error", msg: data.error });
+        setShareStatus({ type: "error", msg: response?.error || "Failed to send message" });
+        tempSocket.disconnect();
       }
-    } catch (err) {
-      setShareStatus({ type: "error", msg: "Network Error! Is Flask running?" });
-    }
+    });
   };
 
   useEffect(() => {
-    window.scrollTo(0, 0); 
+    window.scrollTo(0, 0);
     const fetchData = async () => {
       try {
         setLoading(true);
         const movieId = id || 1000001;
-        
+
         const movieData = await getMovieDetail(movieId);
         setMovie(movieData);
-        
+
         const reviewsData = await getMovieReviews(movieId);
         if (reviewsData && reviewsData.reviews) {
           setReviews(reviewsData.reviews);
@@ -37144,20 +39380,23 @@ export default function MovieDetail() {
 
   const handlePostReview = async () => {
     if (!reviewInput.trim() || userRating === 0) {
-      alert("Please write a review and give a star rating!"); 
-      return; 
+      alert("Please write a review and give a star rating!");
+      return;
     }
-    
+
     setIsSubmitting(true);
-    const result = await postReview(id, reviewInput, userRating, isSpoiler); 
-    
+    const result = await postReview(id, reviewInput, userRating, isSpoiler);
+
     if (result) {
-      const freshReviews = await getMovieReviews(id || 1000001);
+      const freshMovie = await getMovieDetail(id);
+      setMovie(freshMovie);
+
+      const freshReviews = await getMovieReviews(id);
       if (freshReviews && freshReviews.reviews) {
         setReviews(freshReviews.reviews);
       }
-      setReviewInput(""); 
-      setUserRating(0); 
+      setReviewInput("");
+      setUserRating(0);
       setIsSpoiler(false);
     }
     setIsSubmitting(false);
@@ -37170,10 +39409,10 @@ export default function MovieDetail() {
     else setHoverRating(index);
   };
 
-  const handleLikeClick = async (reviewId, index) => {
+  const handleLikeClick = async (reviewId) => {
     const result = await toggleReviewLike(reviewId);
     if (result) {
-      const updatedReviews = reviews.map(r => {
+      const updatedReviews = reviews.map((r) => {
         if (r.review_id === reviewId) {
           return { ...r, is_liked: result.liked, likes: result.likes_count };
         }
@@ -37183,7 +39422,9 @@ export default function MovieDetail() {
     }
   };
 
-  const hasReviewed = reviews.some(review => review.username === currentUsername);
+  const hasReviewed = reviews.some(
+    (review) => Number(review.user_id) === myUserId || review.username === currentUsername
+  );
 
   const handleWatchedClick = () => {
     if (!hasReviewed && reviewSectionRef.current) {
@@ -37198,23 +39439,63 @@ export default function MovieDetail() {
     return new Date(b.created_at) - new Date(a.created_at);
   });
 
-  if (loading) return <CinematicLoader/>;
-  if (!movie) return <h1 style={{ color: "red", textAlign: "center", marginTop: "20%" }}>❌ Movie Not Found or API Failed! (Check Console)</h1>;
+  if (loading) return <CinematicLoader />;
+  if (!movie) return <h1 style={{ color: "red", textAlign: "center", marginTop: "20%" }}>❌ Movie Not Found or API Failed!</h1>;
 
   const avg = Number(movie.avg_rating) || 0;
-  const ratingDistribution = [
-    { stars: 5, percentage: Math.min(100, Math.max(5, Math.round((avg / 5) * 70))) },
-    { stars: 4, percentage: Math.min(100, Math.max(5, Math.round((avg / 5) * 20))) },
-    { stars: 3, percentage: Math.min(100, Math.max(5, Math.round((avg / 5) * 8))) },
-    { stars: 2, percentage: 2 },
-    { stars: 1, percentage: 1 },
-  ];
+
+  // 🚀 RESTORED SMART BELL CURVE LOGIC (This makes the graph look amazing again)
+  const buildRatingDistribution = (avgScore, userReviews) => {
+    if (!avgScore || avgScore <= 0) {
+      return [5, 4, 3, 2, 1].map((s) => ({ stars: s, percentage: 0 }));
+    }
+
+    const BASE_WEIGHT = 10; 
+    const rawWeights = { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 };
+    let weightSum = 0;
+    const tempWeights = {};
+
+    [5, 4, 3, 2, 1].forEach((star) => {
+      const w = Math.exp(-0.75 * Math.pow(star - avgScore, 2));
+      tempWeights[star] = w;
+      weightSum += w;
+    });
+
+    [5, 4, 3, 2, 1].forEach((star) => {
+      rawWeights[star] = (tempWeights[star] / weightSum) * BASE_WEIGHT;
+    });
+
+    userReviews.forEach((r) => {
+      const s = Math.round(Number(r.rating) || 0);
+      if (s >= 1 && s <= 5) {
+        rawWeights[s] += 1;
+      }
+    });
+
+    const totalVotes = BASE_WEIGHT + userReviews.length;
+
+    let percentages = [5, 4, 3, 2, 1].map((star) => ({
+      stars: star,
+      percentage: Math.max(1, Math.round((rawWeights[star] / totalVotes) * 100)),
+    }));
+
+    const currentSum = percentages.reduce((acc, item) => acc + item.percentage, 0);
+    const diff = 100 - currentSum;
+    let maxIdx = 0;
+    percentages.forEach((item, idx) => {
+      if (item.percentage > percentages[maxIdx].percentage) maxIdx = idx;
+    });
+    percentages[maxIdx].percentage = Math.max(1, percentages[maxIdx].percentage + diff);
+
+    return percentages;
+  };
+
+  const ratingDistribution = buildRatingDistribution(avg, reviews);
 
   return (
     <div className="movie-detail-page">
       <Navbar onOpenSearch={() => setIsSearchOpen(true)} />
 
-      {/* 🌟 WIDE CINEMATIC BACKDROP HERO */}
       <div className="md-backdrop-hero" style={{ backgroundImage: `url(${movie.backdrop_url || movie.poster_url})` }}>
         <div className="md-backdrop-overlay"></div>
 
@@ -37229,90 +39510,88 @@ export default function MovieDetail() {
             <img src={movie.poster_url} alt={movie.title} />
           </div>
 
-          <div className="md-backdrop-info" style={{ width: '100%' }}>
-            
-            {/* 🚀 Sleek Top Row: Title + Meta on Left, Share on Right */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '15px' }}>
+          <div className="md-backdrop-info" style={{ width: "100%" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: "15px" }}>
               <div>
-                <div className="md-meta-top">
-                  <span>Movie</span> • <span>{movie.release_year}</span> • <span>{movie.runtime_minutes || "120"} mins</span> • <span>Directed by {movie.director || "Unknown"}</span>
+                <div className="md-meta-top" style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                  <span>Movie</span>
+                  <span>•</span>
+                  <span>{movie.release_year}</span>
+                  <span>•</span>
+                  <span>{movie.runtime_minutes || "120"} mins</span>
+                  <span>•</span>
+                  <span>Directed by {movie.director || "Unknown"}</span>
                 </div>
-                <h1 className="md-backdrop-title" style={{ marginTop: '5px' }}>{movie.title}</h1>
+                <h1 className="md-backdrop-title" style={{ marginTop: "5px" }}>{movie.title}</h1>
               </div>
 
-              {/* 🚀 PREMIUM SHARE BUTTON (Top Right) */}
-              <button 
+              <button
                 onClick={() => setShowShareModal(true)}
                 style={{
-                  display: 'flex', alignItems: 'center', gap: '8px',
-                  background: 'rgba(255, 255, 255, 0.08)', border: '1px solid rgba(255, 255, 255, 0.15)',
-                  padding: '8px 16px', borderRadius: '30px', color: '#fff',
-                  cursor: 'pointer', transition: 'all 0.3s ease',
-                  backdropFilter: 'blur(10px)', marginTop: '5px'
+                  display: "flex", alignItems: "center", gap: "8px",
+                  background: "rgba(255, 255, 255, 0.08)", border: "1px solid rgba(255, 255, 255, 0.15)",
+                  padding: "8px 16px", borderRadius: "30px", color: "#fff",
+                  cursor: "pointer", transition: "all 0.3s ease",
+                  backdropFilter: "blur(10px)", marginTop: "5px"
                 }}
-                onMouseEnter={(e) => { e.currentTarget.style.background='rgba(155, 92, 255, 0.2)'; e.currentTarget.style.borderColor='rgba(155, 92, 255, 0.5)'; e.currentTarget.style.color='#fff'; }}
-                onMouseLeave={(e) => { e.currentTarget.style.background='rgba(255, 255, 255, 0.08)'; e.currentTarget.style.borderColor='rgba(255, 255, 255, 0.15)'; }}
               >
                 <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" strokeWidth="2.5" fill="none" strokeLinecap="round" strokeLinejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
                 <span style={{ fontSize: "13px", fontWeight: "600", letterSpacing: "0.5px" }}>Share</span>
               </button>
             </div>
-            
-            <div className="md-genres-hero" style={{ marginTop: '10px' }}>
-              {movie.genres?.map(g => <span key={g} className="genre-pill">{g}</span>)}
+
+            <div className="md-genres-hero" style={{ marginTop: "10px" }}>
+              {movie.genres?.map((g) => <span key={g} className="genre-pill">{g}</span>)}
             </div>
 
-            {/* 🚀 LIBRARY ACTION BUTTONS (SVGs Only) */}
-            <div className="md-backdrop-actions" style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', marginTop: '20px' }}>
-              
-              <button 
+            <div className="md-backdrop-actions" style={{ display: "flex", gap: "12px", flexWrap: "wrap", marginTop: "20px" }}>
+              <button
                 className={hasReviewed ? "btn-watched" : "btn-watchlist"}
                 onClick={handleWatchedClick}
                 style={{
-                  display: 'flex', alignItems: 'center', gap: '8px',
+                  display: "flex", alignItems: "center", gap: "8px",
                   background: hasReviewed ? "#1db954" : "rgba(255, 255, 255, 0.12)",
                   color: hasReviewed ? "#000" : "#fff",
                   borderColor: hasReviewed ? "transparent" : "rgba(255, 255, 255, 0.25)",
                   cursor: hasReviewed ? "default" : "pointer",
-                  padding: '10px 20px', borderRadius: '8px', fontWeight: '600'
+                  padding: "10px 20px", borderRadius: "8px", fontWeight: "600"
                 }}
               >
-                {hasReviewed ? 
-                  <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" strokeWidth="3" fill="none" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg> : 
+                {hasReviewed ? (
+                  <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" strokeWidth="3" fill="none" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                ) : (
                   <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
-                }
+                )}
                 {hasReviewed ? "Watched" : "Mark as Watched"}
               </button>
 
-              <button 
-                className="btn-secondary-action" 
+              <button
+                className="btn-secondary-action"
                 onClick={handleOpenCollectionModal}
-                style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 20px' }}
+                style={{ display: "flex", alignItems: "center", gap: "8px", padding: "10px 20px" }}
               >
                 <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
                 Collections
               </button>
-              
-              <button 
-                className="btn-secondary-action" 
+
+              <button
+                className="btn-secondary-action"
                 onClick={handleAddToWatchlist}
-                style={{ 
-                  display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 20px',
-                  background: isWatchlistAdded ? 'rgba(29, 185, 84, 0.15)' : '', 
-                  borderColor: isWatchlistAdded ? '#1db954' : '',
-                  color: isWatchlistAdded ? '#1db954' : ''
+                style={{
+                  display: "flex", alignItems: "center", gap: "8px", padding: "10px 20px",
+                  background: isWatchlistAdded ? "rgba(29, 185, 84, 0.15)" : "",
+                  borderColor: isWatchlistAdded ? "#1db954" : "",
+                  color: isWatchlistAdded ? "#1db954" : ""
                 }}
               >
                 <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" strokeWidth="2" fill={isWatchlistAdded ? "currentColor" : "none"} strokeLinecap="round" strokeLinejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"></path></svg>
                 {isWatchlistAdded ? "Added" : "Watch Later"}
               </button>
-
             </div>
           </div>
         </div>
       </div>
 
-      {/* 🌟 TRAILER MODAL POPUP */}
       {isTrailerOpen && trailerKey && (
         <div className="trailer-modal-overlay" onClick={() => { setIsTrailerOpen(false); setTrailerKey(null); }}>
           <div className="trailer-modal-content" onClick={(e) => e.stopPropagation()}>
@@ -37343,9 +39622,9 @@ export default function MovieDetail() {
             <h2>Cast</h2>
             <div className="md-cast-row">
               {movie.cast?.map((actor) => (
-                <Link 
-                  to={`/actor/${encodeURIComponent(actor.name || actor)}`} 
-                  key={actor.id || actor} 
+                <Link
+                  to={`/actor/${encodeURIComponent(actor.name || actor)}`}
+                  key={actor.id || actor}
                   className="cast-card"
                   style={{ textDecoration: "none", color: "inherit" }}
                 >
@@ -37369,7 +39648,7 @@ export default function MovieDetail() {
                   const isHalf = currentDisplayRating === starIndex - 0.5;
 
                   return (
-                    <div 
+                    <div
                       key={starIndex}
                       className="star-wrapper"
                       onMouseMove={(e) => handleMouseMove(e, starIndex)}
@@ -37385,31 +39664,31 @@ export default function MovieDetail() {
             </div>
 
             <div className="write-review-box">
-              <textarea 
-                className="review-textarea" 
+              <textarea
+                className="review-textarea"
                 placeholder="Write your review here..."
                 rows="4"
                 value={reviewInput}
                 onChange={(e) => setReviewInput(e.target.value)}
               ></textarea>
-              
-              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#aaa', fontSize: '13px', marginTop: '10px', cursor: 'pointer' }}>
-                <input 
-                  type="checkbox" 
-                  checked={isSpoiler} 
-                  onChange={(e) => setIsSpoiler(e.target.checked)} 
-                  style={{ cursor: 'pointer' }}
+
+              <label style={{ display: "flex", alignItems: "center", gap: "8px", color: "#aaa", fontSize: "13px", marginTop: "10px", cursor: "pointer" }}>
+                <input
+                  type="checkbox"
+                  checked={isSpoiler}
+                  onChange={(e) => setIsSpoiler(e.target.checked)}
+                  style={{ cursor: "pointer" }}
                 />
                 <svg viewBox="0 0 24 24" width="16" height="16" stroke="#ffcc00" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
                 This review contains spoilers
               </label>
 
               <div className="review-btn-row">
-                <button 
-                  className="btn-submit-review" 
+                <button
+                  className="btn-submit-review"
                   onClick={handlePostReview}
-                  disabled={isSubmitting || !reviewInput.trim()}
-                  style={{ opacity: (!reviewInput.trim() || isSubmitting) ? 0.5 : 1, cursor: (!reviewInput.trim() || isSubmitting) ? 'not-allowed' : 'pointer' }}
+                  disabled={isSubmitting || !reviewInput.trim() || userRating === 0}
+                  style={{ opacity: (!reviewInput.trim() || isSubmitting || userRating === 0) ? 0.5 : 1, cursor: (!reviewInput.trim() || isSubmitting || userRating === 0) ? "not-allowed" : "pointer" }}
                 >
                   {isSubmitting ? "Posting..." : "Post Review"}
                 </button>
@@ -37418,12 +39697,12 @@ export default function MovieDetail() {
           </section>
 
           <section className="md-section">
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "20px" }}>
               <h2 style={{ margin: 0 }}>User Reviews</h2>
-              <select 
-                value={sortBy} 
+              <select
+                value={sortBy}
                 onChange={(e) => setSortBy(e.target.value)}
-                style={{ background: '#1a1a22', color: '#fff', padding: '8px 12px', border: '1px solid #333', borderRadius: '6px', outline: 'none', cursor: 'pointer', fontSize: '14px' }}
+                style={{ background: "#1a1a22", color: "#fff", padding: "8px 12px", border: "1px solid #333", borderRadius: "6px", outline: "none", cursor: "pointer", fontSize: "14px" }}
               >
                 <option value="recent">Most Recent</option>
                 <option value="liked">Most Liked</option>
@@ -37433,7 +39712,7 @@ export default function MovieDetail() {
             <div className="reviews-list">
               {sortedReviews.slice(0, visibleReviews).map((review, index) => {
                 const isHiddenSpoiler = Boolean(review.is_spoiler) && !revealedSpoilers[review.review_id];
-                
+
                 return (
                   <div key={review.review_id} className="user-review-card">
                     <div className="ur-header">
@@ -37441,18 +39720,18 @@ export default function MovieDetail() {
                       <div className="ur-info">
                         <h4>{review.username}</h4>
                         <span className="ur-stars" style={{ color: "#f5c518", fontSize: "14px", letterSpacing: "2px" }}>
-                          {"★".repeat(Math.floor(review.rating || 0))} 
+                          {"★".repeat(Math.floor(review.rating || 0))}
                           {(review.rating || 0) % 1 !== 0 ? "½" : ""}
                         </span>
                       </div>
                     </div>
-                    
-                    <div style={{ position: 'relative', marginBottom: '15px' }}>
-                      <p 
-                        className="ur-text" 
+
+                    <div style={{ position: "relative", marginBottom: "15px" }}>
+                      <p
+                        className="ur-text"
                         onClick={() => {
                           if (isHiddenSpoiler) {
-                            setRevealedSpoilers(prev => ({ ...prev, [review.review_id]: true }));
+                            setRevealedSpoilers((prev) => ({ ...prev, [review.review_id]: true }));
                           }
                         }}
                         style={{
@@ -37466,44 +39745,43 @@ export default function MovieDetail() {
                       >
                         {review.review_text}
                       </p>
-                      
+
                       {isHiddenSpoiler && (
-                        <div 
-                          onClick={() => setRevealedSpoilers(prev => ({ ...prev, [review.review_id]: true }))}
+                        <div
+                          onClick={() => setRevealedSpoilers((prev) => ({ ...prev, [review.review_id]: true }))}
                           style={{
-                            position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
-                            display: 'flex', alignItems: 'center', justifyContent: 'center',
-                            background: 'rgba(26, 26, 34, 0.3)',
-                            cursor: 'pointer', borderRadius: '8px', zIndex: 2
+                            position: "absolute", top: 0, left: 0, right: 0, bottom: 0,
+                            display: "flex", alignItems: "center", justifyContent: "center",
+                            background: "rgba(26, 26, 34, 0.3)",
+                            cursor: "pointer", borderRadius: "8px", zIndex: 2
                           }}
                         >
                           <span style={{
-                            background: 'rgba(255, 77, 77, 0.15)', color: '#ff4d4d',
-                            padding: '8px 18px', borderRadius: '24px', fontSize: '13px',
-                            fontWeight: '600', border: '1px solid rgba(255, 77, 77, 0.3)',
-                            backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', gap: '8px'
+                            background: "rgba(255, 77, 77, 0.15)", color: "#ff4d4d",
+                            padding: "8px 18px", borderRadius: "24px", fontSize: "13px",
+                            fontWeight: "600", border: "1px solid rgba(255, 77, 77, 0.3)",
+                            backdropFilter: "blur(4px)", display: "flex", alignItems: "center", gap: "8px"
                           }}>
-                            <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
                             Reveal Spoilers
                           </span>
                         </div>
                       )}
                     </div>
-                    
+
                     <div className="review-actions" style={{ display: "flex", gap: "20px", marginTop: "10px" }}>
-                      <button 
-                        className={`like-btn ${review.is_liked ? 'liked' : ''}`}
+                      <button
+                        className={`like-btn ${review.is_liked ? "liked" : ""}`}
                         onClick={() => handleLikeClick(review.review_id, index)}
-                        style={{ background: 'transparent', border: 'none', color: review.is_liked ? '#ff4757' : '#aaa', cursor: 'pointer', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '6px' }}
+                        style={{ background: "transparent", border: "none", color: review.is_liked ? "#ff4757" : "#aaa", cursor: "pointer", fontSize: "13px", display: "flex", alignItems: "center", gap: "6px" }}
                       >
                         <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" strokeWidth="2" fill={review.is_liked ? "currentColor" : "none"} strokeLinecap="round" strokeLinejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"></path></svg>
-                        <span className="like-count" style={{ color: '#aaa' }}>{review.likes || 0}</span>
+                        <span className="like-count" style={{ color: "#aaa" }}>{review.likes || 0}</span>
                       </button>
 
-                      <button 
+                      <button
                         className="comment-toggle-btn"
                         onClick={() => setActiveCommentReviewId(activeCommentReviewId === review.review_id ? null : review.review_id)}
-                        style={{ background: 'transparent', border: 'none', color: '#aaa', cursor: 'pointer', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '6px' }}
+                        style={{ background: "transparent", border: "none", color: "#aaa", cursor: "pointer", fontSize: "13px", display: "flex", alignItems: "center", gap: "6px" }}
                       >
                         <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"></path></svg>
                         {review.comments?.length || 0} Comments
@@ -37511,97 +39789,104 @@ export default function MovieDetail() {
                     </div>
 
                     {activeCommentReviewId === review.review_id && (
-                      <div className="review-comments-section" style={{ 
-                        marginTop: '15px', 
-                        padding: '16px', 
-                        background: 'rgba(255, 255, 255, 0.02)', 
-                        borderRadius: '8px', 
-                        borderLeft: '3px solid #9b5cff' 
+                      <div className="review-comments-section" style={{
+                        marginTop: "15px",
+                        padding: "16px",
+                        background: "rgba(255, 255, 255, 0.02)",
+                        borderRadius: "8px",
+                        borderLeft: "3px solid var(--primary-accent)"
                       }}>
-                        
-                        <div className="existing-comments" style={{ marginBottom: '16px' }}>
+                        <div className="existing-comments" style={{ marginBottom: "16px" }}>
                           {review.comments && review.comments.length === 0 && (
-                            <p style={{ color: '#888', fontSize: '13.5px', textAlign: 'center', margin: '10px 0' }}>No comments yet. Be the first to reply!</p>
+                            <p style={{ color: "#888", fontSize: "13.5px", textAlign: "center", margin: "10px 0" }}>No comments yet. Be the first to reply!</p>
                           )}
-                          {review.comments && review.comments.map((cmt) => (
-                            <div key={cmt.comment_id} style={{ 
-                              background: '#16161d', 
-                              padding: '14px 16px', 
-                              borderRadius: '8px', 
-                              marginBottom: '10px', 
-                              display: 'flex', 
-                              justifyContent: 'space-between', 
-                              alignItems: 'flex-start',
-                              border: '1px solid rgba(255,255,255,0.05)'
-                            }}>
-                              <div style={{ fontSize: '14.5px', color: '#e0e0e0', lineHeight: '1.5', paddingRight: '15px' }}>
-                                <strong style={{ color: '#9b5cff', marginRight: '6px' }}>{cmt.username}</strong>
-                                {cmt.comment_text}
-                              </div>
-                              
-                              {cmt.username === currentUsername && (
-                                <button 
-                                  onClick={async () => {
-                                    const res = await fetch(`http://127.0.0.1:5000/comments/${cmt.comment_id}`, {
-                                      method: 'DELETE',
-                                      headers: { 
-                                        'Content-Type': 'application/json',
-                                        'Authorization': `Bearer ${token}`
-                                       },
-                                      body: JSON.stringify({ user_id: localStorage.getItem("user_id") ,comment_text: commentInput})
-                                    });
-                                    if (res.ok) {
-                                      const freshReviews = await getMovieReviews(id);
-                                      if (freshReviews && freshReviews.reviews) {
-                                        setReviews(freshReviews.reviews);
+                          {review.comments && review.comments.map((cmt) => {
+                            const isMyComment =
+                              (cmt.user_id && Number(cmt.user_id) === myUserId) ||
+                              cmt.username === currentUsername;
+
+                            return (
+                              <div key={cmt.comment_id} style={{
+                                background: "#16161d",
+                                padding: "14px 16px",
+                                borderRadius: "8px",
+                                marginBottom: "10px",
+                                display: "flex",
+                                justifyContent: "space-between",
+                                alignItems: "flex-start",
+                                border: "1px solid rgba(255,255,255,0.05)"
+                              }}>
+                                <div style={{ fontSize: "14.5px", color: "#e0e0e0", lineHeight: "1.5", paddingRight: "15px" }}>
+                                  <strong style={{ color: "var(--primary-accent)", marginRight: "6px" }}>{cmt.username}</strong>
+                                  {cmt.comment_text}
+                                </div>
+
+                                {isMyComment && (
+                                  <button
+                                    onClick={async () => {
+                                      const res = await fetch(`${API_BASE_URL}/comments/${cmt.comment_id}`, {
+                                        method: "DELETE",
+                                        headers: {
+                                          "Content-Type": "application/json",
+                                          "Authorization": `Bearer ${token}`
+                                        }
+                                      });
+                                      if (res.ok) {
+                                        const freshReviews = await getMovieReviews(id);
+                                        if (freshReviews && freshReviews.reviews) {
+                                          setReviews(freshReviews.reviews);
+                                        }
                                       }
-                                    }
-                                  }}
-                                  style={{ 
-                                    background: 'rgba(255, 77, 77, 0.1)', 
-                                    border: 'none', 
-                                    color: '#ff4d4d', 
-                                    cursor: 'pointer', 
-                                    fontSize: '12px', 
-                                    fontWeight: '600',
-                                    padding: '6px 12px',
-                                    borderRadius: '6px'
-                                  }}
-                                >
-                                  Delete
-                                </button>
-                              )}
-                            </div>
-                          ))}
+                                    }}
+                                    style={{
+                                      background: "rgba(255, 77, 77, 0.1)",
+                                      border: "none",
+                                      color: "#ff4d4d",
+                                      cursor: "pointer",
+                                      fontSize: "12px",
+                                      fontWeight: "600",
+                                      padding: "6px 12px",
+                                      borderRadius: "6px"
+                                    }}
+                                  >
+                                    Delete
+                                  </button>
+                                )}
+                              </div>
+                            );
+                          })}
                         </div>
 
-                        <div style={{ display: 'flex', gap: '12px' }}>
-                          <input 
-                            type="text" 
-                            placeholder="Write a reply..." 
+                        <div style={{ display: "flex", gap: "12px" }}>
+                          <input
+                            type="text"
+                            placeholder="Write a reply..."
                             value={commentInput}
                             onChange={(e) => setCommentInput(e.target.value)}
-                            style={{ 
-                              flex: 1, 
-                              padding: '12px 16px', 
-                              background: '#111', 
-                              border: '1px solid #333', 
-                              color: '#fff', 
-                              borderRadius: '8px', 
-                              fontSize: '14.5px',
-                              outline: 'none'
+                            maxLength={500}
+                            style={{
+                              flex: 1,
+                              padding: "12px 16px",
+                              background: "#111",
+                              border: "1px solid #333",
+                              color: "#fff",
+                              borderRadius: "8px",
+                              fontSize: "14.5px",
+                              outline: "none"
                             }}
                           />
-                          <button 
+                          <button
                             onClick={async () => {
                               if (!commentInput.trim()) return;
-                              
-                              const res = await fetch(`http://127.0.0.1:5000/reviews/${review.review_id}/comments`, {
-                                method: 'POST',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({ 
-                                  user_id: localStorage.getItem("user_id"), 
-                                  comment_text: commentInput 
+
+                              const res = await fetch(`${API_BASE_URL}/reviews/${review.review_id}/comments`, {
+                                method: "POST",
+                                headers: {
+                                  "Content-Type": "application/json",
+                                  "Authorization": `Bearer ${token}`
+                                },
+                                body: JSON.stringify({
+                                  comment_text: commentInput.trim()
                                 })
                               });
 
@@ -37613,16 +39898,16 @@ export default function MovieDetail() {
                                 }
                               }
                             }}
-                            style={{ 
-                              padding: '0 24px', 
-                              background: '#9b5cff', 
-                              color: '#fff', 
-                              border: 'none', 
-                              borderRadius: '8px', 
-                              cursor: 'pointer', 
-                              fontSize: '14.5px', 
-                              fontWeight: '600',
-                              height: '45px'
+                            style={{
+                              padding: "0 24px",
+                              background: "var(--primary-accent)",
+                              color: "#fff",
+                              border: "none",
+                              borderRadius: "8px",
+                              cursor: "pointer",
+                              fontSize: "14.5px",
+                              fontWeight: "600",
+                              height: "45px"
                             }}
                           >
                             Send
@@ -37643,7 +39928,7 @@ export default function MovieDetail() {
             <div className="rating-graph-container">
               <div className="rg-avg-score">
                 <span className="rg-big-star">★</span>
-                <h2>{movie.avg_rating}</h2>
+                <h2>{avg > 0 ? avg.toFixed(2) : "0.00"}</h2>
               </div>
               <div className="rg-bars">
                 {ratingDistribution.map((item) => (
@@ -37675,7 +39960,7 @@ export default function MovieDetail() {
       <div className="md-bottom-full">
         <h2>More Like This</h2>
         <div className="md-recommendation-row">
-          {movie.recommendations?.map(rec => (
+          {movie.recommendations?.map((rec) => (
             <Link to={`/movie/${rec.movie_id}`} key={rec.movie_id} className="ml-poster-card">
               <img src={rec.poster_url} alt={rec.title} />
               <div className="ml-poster-info">
@@ -37691,15 +39976,14 @@ export default function MovieDetail() {
         <div className="modal-overlay" onClick={() => setShowColModal(false)}>
           <div className="col-modal-content" onClick={(e) => e.stopPropagation()}>
             <h3>Add to Collection</h3>
-            
+
             <div className="col-list-scroll">
               {userCollections.length === 0 ? (
                 <p className="no-col-text" style={{ color: "#888", textAlign: "center", padding: "10px" }}>No collections found. Create one below!</p>
               ) : (
-                userCollections.map(col => (
+                userCollections.map((col) => (
                   <div key={col.collection_id} className="col-select-item" onClick={() => handleAddToExisting(col.collection_id)}>
-                    <span style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
+                    <span style={{ display: "flex", alignItems: "center", gap: "8px" }}>
                       {col.title}
                     </span>
                     <button className="add-plus-btn">+</button>
@@ -37712,10 +39996,10 @@ export default function MovieDetail() {
               <button className="btn-create-toggle" onClick={() => setCreatingNew(true)}>+ Create New Collection</button>
             ) : (
               <form onSubmit={handleCreateAndAdd} className="quick-create-form">
-                <input 
-                  type="text" 
-                  placeholder="Collection Name..." 
-                  value={newColTitle} 
+                <input
+                  type="text"
+                  placeholder="Collection Name..."
+                  value={newColTitle}
                   onChange={(e) => setNewColTitle(e.target.value)}
                   autoFocus
                 />
@@ -37731,19 +40015,17 @@ export default function MovieDetail() {
         </div>
       )}
 
-      {/* 🚀 JADU WALA MODAL: SHARE MOVIE POPUP */}
       {showShareModal && (
-        <div className="modal-overlay" style={{ zIndex: 9999, display: 'flex', alignItems: 'center', justifyContent: 'center' }} onClick={() => setShowShareModal(false)}>
+        <div className="modal-overlay" style={{ zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setShowShareModal(false)}>
           <div className="col-modal-content" onClick={(e) => e.stopPropagation()} style={{ width: "420px", background: "#111116", border: "1px solid rgba(155, 92, 255, 0.2)", borderRadius: "16px" }}>
-            <h3 style={{ marginTop: 0, borderBottom: "1px solid rgba(255,255,255,0.1)", paddingBottom: "15px", display: 'flex', alignItems: 'center', gap: '10px' }}>
-              <svg viewBox="0 0 24 24" width="20" height="20" stroke="#9b5cff" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
+            <h3 style={{ marginTop: 0, borderBottom: "1px solid rgba(255,255,255,0.1)", paddingBottom: "15px", display: "flex", alignItems: "center", gap: "10px" }}>
               Share "{movie.title}"
             </h3>
 
             <div style={{ padding: "10px 0" }}>
-              <label style={{ fontSize: "12px", color: "#888", display: "block", marginBottom: "8px", fontWeight: "700", letterSpacing: "0.5px" }}>FRIEND'S EXACT USERNAME</label>
-              <input 
-                type="text" 
+              <label style={{ fontSize: "12px", color: "#888", display: "block", marginBottom: "8px", fontWeight: "700", letterSpacing: "0.5px" }}>SEARCH FRIEND'S USERNAME</label>
+              <input
+                type="text"
                 value={shareUsername}
                 onChange={(e) => setShareUsername(e.target.value)}
                 style={{ width: "93%", padding: "14px", borderRadius: "8px", background: "#1a1a24", border: "1px solid #333", color: "#fff", outline: "none", fontSize: "14px" }}
@@ -37751,39 +40033,40 @@ export default function MovieDetail() {
                 autoFocus
               />
 
-              {/* 🚀 SUGGESTED FRIENDS CHIPS (INSTA STYLE) */}
-              {allUsers.length > 0 && (
+              {allFriends.length > 0 && (
                 <div style={{ marginTop: "12px", marginBottom: "20px" }}>
-                  <span style={{ fontSize: "11px", color: "#888", fontWeight: "600", textTransform: "uppercase", letterSpacing: "0.5px" }}>Suggested Friends</span>
-                  
-                  <div style={{ display: 'flex', gap: '8px', overflowX: 'auto', padding: '10px 0', scrollbarWidth: 'none', WebkitOverflowScrolling: 'touch' }}>
-                    {allUsers
-                      .filter(u => u.username.toLowerCase().includes(shareUsername.toLowerCase()))
-                      .map(u => (
-                      <div 
-                        key={u.username}
-                        onClick={() => setShareUsername(u.username)}
-                        style={{
-                          display: 'flex', alignItems: 'center', gap: '6px',
-                          background: shareUsername === u.username ? 'rgba(155, 92, 255, 0.2)' : 'rgba(255, 255, 255, 0.05)',
-                          border: `1px solid ${shareUsername === u.username ? '#9b5cff' : 'rgba(255, 255, 255, 0.1)'}`,
-                          padding: '6px 12px', borderRadius: '20px', cursor: 'pointer',
-                          color: shareUsername === u.username ? '#fff' : '#aaa', fontSize: '13px', whiteSpace: 'nowrap', transition: '0.2s'
-                        }}
-                      >
-                        {/* Chhota Avatar */}
-                        <div style={{ width: '22px', height: '22px', background: shareUsername === u.username ? '#9b5cff' : '#333', color: '#fff', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '10px', fontWeight: 'bold' }}>
-                          {u.username.charAt(0).toUpperCase()}
+                  <span style={{ fontSize: "11px", color: "#888", fontWeight: "600", textTransform: "uppercase", letterSpacing: "0.5px" }}>Select a Friend to Send</span>
+
+                  <div style={{ display: "flex", gap: "8px", overflowX: "auto", padding: "10px 0", scrollbarWidth: "none" }}>
+                    {allFriends
+                      .filter((u) => u.username.toLowerCase().includes(shareUsername.toLowerCase()))
+                      .map((u) => (
+                        <div
+                          key={u.id}
+                          onClick={() => {
+                            setShareUsername(u.username);
+                            setShareFriendId(u.id);
+                          }}
+                          style={{
+                            display: "flex", alignItems: "center", gap: "6px",
+                            background: shareFriendId === u.id ? "rgba(155, 92, 255, 0.2)" : "rgba(255, 255, 255, 0.05)",
+                            border: `1px solid ${shareFriendId === u.id ? "var(--primary-accent)" : "rgba(255, 255, 255, 0.1)"}`,
+                            padding: "6px 12px", borderRadius: "20px", cursor: "pointer",
+                            color: shareFriendId === u.id ? "#fff" : "#aaa", fontSize: "13px", whiteSpace: "nowrap"
+                          }}
+                        >
+                          <div style={{ width: "22px", height: "22px", background: shareFriendId === u.id ? "var(--primary-accent)" : "#333", color: "#fff", borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "10px", fontWeight: "bold" }}>
+                            {u.username.charAt(0).toUpperCase()}
+                          </div>
+                          {u.username}
                         </div>
-                        {u.username}
-                      </div>
-                    ))}
+                      ))}
                   </div>
                 </div>
               )}
 
               <label style={{ fontSize: "12px", color: "#888", display: "block", marginTop: "10px", marginBottom: "8px", fontWeight: "700", letterSpacing: "0.5px" }}>PERSONAL MESSAGE (OPTIONAL)</label>
-              <textarea 
+              <textarea
                 value={shareMessage}
                 onChange={(e) => setShareMessage(e.target.value)}
                 style={{ width: "93%", padding: "14px", borderRadius: "8px", background: "#1a1a24", border: "1px solid #333", color: "#fff", height: "80px", resize: "none", outline: "none", fontSize: "14px" }}
@@ -37791,37 +40074,33 @@ export default function MovieDetail() {
             </div>
 
             {shareStatus && (
-              <div style={{ 
-                padding: "12px", 
-                borderRadius: "8px", 
-                background: shareStatus.type === "error" ? "rgba(255, 71, 87, 0.1)" : "rgba(46, 213, 115, 0.1)", 
-                color: shareStatus.type === "error" ? "#ff4757" : "#2ed573", 
-                fontSize: "14px", 
+              <div style={{
+                padding: "12px",
+                borderRadius: "8px",
+                background: shareStatus.type === "error" ? "rgba(255, 71, 87, 0.1)" : "rgba(46, 213, 115, 0.1)",
+                color: shareStatus.type === "error" ? "#ff4757" : "#2ed573",
+                fontSize: "14px",
                 marginTop: "10px",
                 border: `1px solid ${shareStatus.type === "error" ? "rgba(255, 71, 87, 0.3)" : "rgba(46, 213, 115, 0.3)"}`,
-                display: 'flex', alignItems: 'center', gap: '8px'
+                display: "flex", alignItems: "center", gap: "8px"
               }}>
-                {shareStatus.type === "success" && <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>}
-                {shareStatus.type === "error" && <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>}
                 {shareStatus.msg}
               </div>
             )}
 
             <div style={{ display: "flex", justifyContent: "flex-end", gap: "12px", marginTop: "25px" }}>
-              <button 
-                onClick={() => setShowShareModal(false)} 
+              <button
+                onClick={() => setShowShareModal(false)}
                 style={{ padding: "10px 20px", background: "transparent", color: "#aaa", border: "none", borderRadius: "8px", cursor: "pointer", fontWeight: "600" }}
               >
                 Cancel
               </button>
-              <button 
-                onClick={handleShareMovie} 
-                disabled={shareStatus?.type === "loading"}
-                style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: "10px 24px", background: "#9b5cff", color: "#fff", border: "none", borderRadius: "8px", cursor: "pointer", fontWeight: "bold", opacity: shareStatus?.type === "loading" ? 0.7 : 1 }}
+              <button
+                onClick={handleShareMovie}
+                disabled={shareStatus?.type === "loading" || !shareFriendId}
+                style={{ display: "flex", alignItems: "center", gap: "8px", padding: "10px 24px", background: "var(--primary-accent)", color: "#fff", border: "none", borderRadius: "8px", cursor: shareFriendId ? "pointer" : "not-allowed", fontWeight: "bold", opacity: (shareStatus?.type === "loading" || !shareFriendId) ? 0.5 : 1 }}
               >
-                {shareStatus?.type === "loading" ? "Sending..." : (
-                  <><span>Send</span><svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" strokeWidth="2.5" fill="none" strokeLinecap="round" strokeLinejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg></>
-                )}
+                {shareStatus?.type === "loading" ? "Sending..." : "Send to Chat"}
               </button>
             </div>
 
@@ -37836,874 +40115,15 @@ export default function MovieDetail() {
 }
 </file>
 
-<file path="Frontend_react/src/services/homeService.js">
-export async function getHomeData() {
-
-  const token = localStorage.getItem("token");
-
-  if (!token) {
-    throw new Error("User is not logged in");
-  }
-
-  const response = await fetch(
-    "http://127.0.0.1:5000/home",
-    {
-      method: "GET",
-
-      headers: {
-        "Authorization": `Bearer ${token}`
-      }
-    }
-  );
-
-  const data = await response.json();
-
-  if (!response.ok) {
-    throw new Error(
-      data.error || "Failed to load home data"
-    );
-  }
-
-  return data;
-}
-
-// Movie Detail fetch karne ka function
-export const getMovieDetail = async (movieId) => {
-  try {
-    // Apne Flask server ka address check kar lena, normally 5000 port par hota hai.
-    const response = await fetch(`http://127.0.0.1:5000/movie/${movieId}`);
-    
-    if (!response.ok) {
-      throw new Error("Failed to fetch movie details");
-    }
-    
-    const data = await response.json();
-    return data;
-  } catch (error) {
-    console.error("API Error in getMovieDetail:", error);
-    return null; // Return null taaki red screen handle ho sake
-  }
-};
-
-
-
-// Toggle Review Like
-export const toggleReviewLike = async (reviewId) => {
-  try {
-    const token = localStorage.getItem("token"); // Token zaroori hai
-    const response = await fetch(`http://127.0.0.1:5000/reviews/${reviewId}/like`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${token}`
-      }
-    });
-
-    if (!response.ok) throw new Error("Failed to toggle like");
-    
-    return await response.json(); // Yeh backend se {liked: true/false, likes_count: 5} layega
-  } catch (error) {
-    console.error("API Error in toggleReviewLike:", error);
-    return null;
-  }
-};
-
-// Post a new review
-// postReview mein 'rating' add kiya
-export const postReview = async (movieId, reviewText, rating, isSpoiler=false ) => {
-  try {
-    const token = localStorage.getItem("token");
-    const response = await fetch(`http://127.0.0.1:5000/reviews/${movieId}`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${token}`
-      },
-      // Backend ko text aur rating dono bhej rahe hain
-      body: JSON.stringify({ review_text: reviewText, rating: rating ,is_spoiler: isSpoiler}) 
-    });
-
-    if (!response.ok) throw new Error("Failed to post review");
-    return await response.json();
-  } catch (error) {
-    console.error("API Error in postReview:", error);
-    return null;
-  }
-};
-
-// Get all reviews for a movie
-export const getMovieReviews = async (movieId) => {
-  try {
-    const token = localStorage.getItem("token");
-    // 🌟 Yahan URL mein '/movie/' aur aage '/reviews' lagana hai
-    const response = await fetch(`http://127.0.0.1:5000/movie/${movieId}/reviews`, {
-      method: "GET",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${token}`
-      }
-    });
-
-    if (!response.ok) throw new Error("Failed to fetch reviews");
-    return await response.json();
-  } catch (error) {
-    console.error("API Error in getMovieReviews:", error);
-    return { reviews: [] };
-  }
-};
-
-// Get User Profile Data
-export const getUserProfile = async (userId) => {
-  try {
-    const token = localStorage.getItem("token");
-    const response = await fetch(`http://127.0.0.1:5000/profile/${userId}`, {
-      method: "GET",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${token}`
-      }
-    });
-
-    if (!response.ok) throw new Error("Failed to fetch user profile");
-    return await response.json();
-  } catch (error) {
-    console.error("API Error in getUserProfile:", error);
-    return null;
-  }
-};
-
-// Get Watchlist
-export const getWatchlist = async () => {
-  try {
-    const token = localStorage.getItem("token");
-    const res = await fetch("http://127.0.0.1:5000/watchlist", {
-      headers: { "Authorization": `Bearer ${token}` }
-    });
-    if (!res.ok) throw new Error("Failed to fetch watchlist");
-    const data = await res.json();
-    return data.watchlist || []; // Tere backend ke JSON response se match kiya
-  } catch (error) {
-    console.error("API Error in getWatchlist:", error);
-    return [];
-  }
-};
-
-// Add to Watchlist
-export const addToWatchlist = async (movieId) => {
-  try {
-    const token = localStorage.getItem("token");
-    const res = await fetch(`http://127.0.0.1:5000/watchlist/${movieId}`, {
-      method: "POST",
-      headers: { "Authorization": `Bearer ${token}` }
-    });
-    
-    if (res.status === 409) {
-      alert("Movie is already in your watchlist!");
-      return false;
-    }
-    
-    return res.ok;
-  } catch (error) {
-    console.error("API Error in addToWatchlist:", error);
-    return false;
-  }
-};
-
-// Remove from Watchlist
-export const removeFromWatchlist = async (movieId) => {
-  try {
-    const token = localStorage.getItem("token");
-    const res = await fetch(`http://127.0.0.1:5000/watchlist/${movieId}`, {
-      method: "DELETE",
-      headers: { "Authorization": `Bearer ${token}` }
-    });
-    return res.ok;
-  } catch (error) {
-    console.error("API Error in removeFromWatchlist:", error);
-    return false;
-  }
-};
-
-// Global Search (Movies & Users)
-export const performSearch = async (query, type = "movie") => {
-  if (!query) return [];
-  try {
-    const token = localStorage.getItem("token");
-    // URL mein type parameter bhej rahe hain
-    const res = await fetch(`http://127.0.0.1:5000/search?q=${encodeURIComponent(query)}&type=${type}`, {
-      headers: { "Authorization": `Bearer ${token}` }
-    });
-    if (!res.ok) throw new Error("Search failed");
-    return await res.json();
-  } catch (error) {
-    console.error("API Error in performSearch:", error);
-    return [];
-  }
-};
-
-// Get Search History
-export const getSearchHistory = async () => {
-  try {
-    const token = localStorage.getItem("token");
-    const res = await fetch(`http://127.0.0.1:5000/search/history`, {
-      headers: { "Authorization": `Bearer ${token}` }
-    });
-    if (!res.ok) return [];
-    const data = await res.json();
-    return data.history || [];
-  } catch (error) {
-    return [];
-  }
-};
-
-// Clear Search History
-export const clearSearchHistory = async () => {
-  try {
-    const token = localStorage.getItem("token");
-    const res = await fetch(`http://127.0.0.1:5000/search/history`, {
-      method: "DELETE",
-      headers: { "Authorization": `Bearer ${token}` }
-    });
-    return res.ok;
-  } catch (error) {
-    return false;
-  }
-};
-
-export const getUserAnalytics = async (userId) => {
-  try {
-    const res = await fetch(`http://127.0.0.1:5000/profile/${userId}/analytics`);
-    if (!res.ok) throw new Error("Analytics failed");
-    return await res.json();
-  } catch (error) {
-    console.error("Error fetching analytics:", error);
-    return null;
-  }
-};
-
-export const getUserCollections = async (userId) => {
-  try {
-    const res = await fetch(`http://127.0.0.1:5000/user/${userId}/collections`);
-    if (!res.ok) return [];
-    return await res.json();
-  } catch (error) {
-    return [];
-  }
-};
-
-export const createCollection = async (title, description) => {
-  try {
-    const token = localStorage.getItem("token");
-    const res = await fetch(`http://127.0.0.1:5000/collections`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${token}`
-      },
-      body: JSON.stringify({ title, description })
-    });
-    return res.ok;
-  } catch (error) {
-    return false;
-  }
-};
-
-export const addMovieToCollection = async (collectionId, movieId) => {
-  try {
-    const token = localStorage.getItem("token");
-    const res = await fetch(`http://127.0.0.1:5000/collections/${collectionId}/movies`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${token}`
-      },
-      body: JSON.stringify({ movie_id: movieId })
-    });
-    const data = await res.json();
-    return { success: res.ok, message: data.message || data.error };
-  } catch (error) {
-    return { success: false, message: "Network error" };
-  }
-};
-
-export const getCollectionDetails = async (collectionId) => {
-  try {
-    const res = await fetch(`http://127.0.0.1:5000/collections/${collectionId}`);
-    if (!res.ok) return null;
-    return await res.json();
-  } catch (error) {
-    return null;
-  }
-};
-
-export const searchUsers = async (query) => {
-  try {
-    const res = await fetch(`http://127.0.0.1:5000/users/search?q=${query}`);
-    if (!res.ok) return [];
-    return await res.json();
-  } catch (error) {
-    return [];
-  }
-};
-
-export const toggleFollowUser = async (targetUserId) => {
-  try {
-    const token = localStorage.getItem("token");
-    const currentUserId = localStorage.getItem("user_id"); // NAYA: Logged-in user ki ID
-    
-    const res = await fetch(`http://127.0.0.1:5000/user/${targetUserId}/follow`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${token}`
-      },
-      body: JSON.stringify({ current_user_id: currentUserId }) // Body mein ID bhej rahe hain
-    });
-    return await res.json();
-  } catch (error) {
-    return null;
-  }
-};
-
-export const getUserFollowStats = async (userId) => {
-  try {
-    const res = await fetch(`http://127.0.0.1:5000/user/${userId}/stats`);
-    if (!res.ok) return { followers_count: 0, following_count: 0 };
-    return await res.json();
-  } catch (error) {
-    return { followers_count: 0, following_count: 0 };
-  }
-};
-
-
-export const updateUserProfile = async (userId, updateData) => {
-  try {
-    const token = localStorage.getItem("token");
-    const res = await fetch(`http://127.0.0.1:5000/profile/${userId}`, {
-      method: "PUT",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${token}`
-      },
-      body: JSON.stringify(updateData) // { username, bio } pass karenge
-    });
-    const data = await res.json();
-    return { success: res.ok, message: data.message || data.error };
-  } catch (error) {
-    return { success: false, message: "Network error" };
-  }
-};
-
-
-export const getActorMovies = async (actorName, page = 1, sortBy = "year") => {
-  try {
-    // 🌟 NAYA: URL mein query parameters add kar diye
-    const response = await fetch(`http://127.0.0.1:5000/actor/${encodeURIComponent(actorName)}?page=${page}&sort_by=${sortBy}`);
-    if (!response.ok) throw new Error("Failed to fetch actor movies");
-    return await response.json();
-  } catch (error) {
-    console.error("API Error in getActorMovies:", error);
-    return [];
-  }
-};
-
-export const getFollowersList = async (userId) => {
-  try {
-    const res = await fetch(`http://127.0.0.1:5000/user/${userId}/followers`);
-    if (!res.ok) return [];
-    return await res.json();
-  } catch (error) {
-    return [];
-  }
-};
-
-export const getFollowingList = async (userId) => {
-  try {
-    const res = await fetch(`http://127.0.0.1:5000/user/${userId}/following`);
-    if (!res.ok) return [];
-    return await res.json();
-  } catch (error) {
-    return [];
-  }
-};
-
-export const getUserReviews = async (userId) => {
-  try {
-    const response = await fetch(`http://127.0.0.1:5000/user/${userId}/reviews`);
-    if (!response.ok) throw new Error("Failed to fetch user reviews");
-    return await response.json();
-  } catch (error) {
-    console.error("API Error in getUserReviews:", error);
-    return [];
-  }
-};
-
-export const getMovieTrailerKey = async (title, year) => {
-  try {
-    const res = await fetch(`http://127.0.0.1:5000/movie/trailer?title=${encodeURIComponent(title)}&year=${encodeURIComponent(year || "")}`);
-    const data = await res.json();
-    if (res.ok && data.videoId) {
-      return data.videoId; // 👈 Sahi 11-character video ID aani chahiye
-    }
-    return null;
-  } catch (error) {
-    console.error("Trailer API Fetch Error:", error);
-    return null;
-  }
-};
-
-// 🎲 Get Surprise Movie
-export const getSurpriseMovie = async () => {
-  try {
-    const token = localStorage.getItem("token");
-    const response = await fetch(`http://127.0.0.1:5000/movie/surprise`, {
-      method: "GET",
-      headers: {
-        "Authorization": `Bearer ${token}`
-      }
-    });
-    if (!response.ok) throw new Error("Failed to fetch surprise");
-    return await response.json(); // Yeh { movie_id: 1000xxx } dega
-  } catch (error) {
-    console.error("API Error in getSurpriseMovie:", error);
-    return null;
-  }
-};
-</file>
-
-<file path="backend/routes/review.py">
-from flask import Blueprint, jsonify, request, g
-from sqlalchemy import text
-
-from backend.database import engine
-from backend.middleware.auth_middleware import token_required
-
-review_bp = Blueprint("review", __name__)
-
-
-# Add or Update review (Smart Upsert)
-@review_bp.route("/reviews/<int:movie_id>", methods=["POST"])
-@token_required
-def add_review(movie_id):
-    user_id = g.user_id
-    data = request.get_json()
-
-    if not data or "review_text" not in data:
-        return jsonify({"error": "Review text is required"}), 400
-
-    review_text = data["review_text"].strip()
-    rating = data.get("rating", 0) 
-    is_spoiler = data.get("is_spoiler", False) # 🌟 NAYA: Spoiler flag receive kiya
-
-    if not review_text:
-        return jsonify({"error": "Review cannot be empty"}), 400
-
-    with engine.begin() as conn:
-        # 1. Check if movie exists
-        movie = conn.execute(
-            text("SELECT movie_id FROM movies WHERE movie_id = :movie_id"),
-            {"movie_id": movie_id}
-        ).first()
-
-        if not movie:
-            return jsonify({"error": "Movie not found"}), 404
-
-        # 2. Check if user already reviewed this movie
-        existing_review = conn.execute(
-            text("""
-                SELECT review_id 
-                FROM reviews 
-                WHERE user_id = :user_id AND movie_id = :movie_id
-            """),
-            {"user_id": user_id, "movie_id": movie_id}
-        ).first()
-
-        if existing_review:
-            # 🔄 UPDATE EXISTING REVIEW (User kitni baar bhi post kare, yahi edit hoga)
-            review_id = existing_review.review_id
-            conn.execute(
-                text("""
-                    UPDATE reviews
-                    SET review_text = :review_text, rating = :rating, is_spoiler = :is_spoiler
-                    WHERE review_id = :review_id
-                """),
-                {
-                    "review_text": review_text,
-                    "rating": rating,
-                    "is_spoiler": is_spoiler,
-                    "review_id": review_id
-                }
-            )
-            message = "Review updated successfully"
-        else:
-            # 🆕 INSERT NEW REVIEW
-            result = conn.execute(
-                text("""
-                    INSERT INTO reviews (user_id, movie_id, review_text, rating, is_spoiler) 
-                    VALUES (:user_id, :movie_id, :review_text, :rating, :is_spoiler)
-                """),
-                {
-                    "user_id": user_id,
-                    "movie_id": movie_id,
-                    "review_text": review_text,
-                    "rating": rating,
-                    "is_spoiler": is_spoiler
-                }
-            )
-            review_id = result.lastrowid
-            message = "Review added successfully"
-
-    return jsonify({
-        "message": message,
-        "review_id": review_id,
-        "movie_id": movie_id,
-        "review_text": review_text,
-        "rating": rating,
-        "is_spoiler": is_spoiler # 🌟 NAYA: React ko wapas bhej rahe hain
-    }), 201
-
-
-# Get reviews for a movie
-@review_bp.route("/reviews/<int:movie_id>", methods=["GET"])
-@token_required
-def get_reviews(movie_id):
-    with engine.connect() as conn:
-        # Check movie exists
-        movie = conn.execute(
-            text("""
-                SELECT movie_id, title
-                FROM movies
-                WHERE movie_id = :movie_id
-            """),
-            {"movie_id": movie_id}
-        ).first()
-
-        if movie is None:
-            return jsonify({
-                "error": "Movie not found"
-            }), 404
-
-        # Get reviews
-        reviews = conn.execute(
-            text("""
-                SELECT
-                r.review_id,
-                r.user_id,
-                u.username,
-                r.review_text,
-                r.rating,
-                r.is_spoiler, -- 🌟 NAYA: Spoiler flag select kiya
-                r.likes,
-                r.created_at,
-
-                CASE
-                    WHEN rl.user_id IS NOT NULL THEN TRUE
-                    ELSE FALSE
-                END AS is_liked
-
-                FROM reviews r
-
-                JOIN users u
-                    ON r.user_id = u.user_id
-
-                LEFT JOIN review_likes rl
-                    ON r.review_id = rl.review_id
-                    AND rl.user_id = :user_id
-
-                WHERE r.movie_id = :movie_id
-
-                ORDER BY r.created_at DESC
-            """),
-            {
-                "movie_id": movie_id,
-                "user_id": g.user_id
-            }
-        ).mappings().all()
-
-    review_list = [dict(review) for review in reviews]
-
-    return jsonify({
-        "movie_id": movie.movie_id,
-        "title": movie.title,
-        "total_reviews": len(review_list),
-        "reviews": review_list
-    }), 200
-
-
-# Update user's own review (Direct Edit)
-@review_bp.route("/reviews/<int:review_id>", methods=["PUT"])
-@token_required
-def update_review(review_id):
-    user_id = g.user_id
-    data = request.get_json()
-
-    if not data or "review_text" not in data:
-        return jsonify({
-            "error": "Review text is required"
-        }), 400
-
-    review_text = data["review_text"].strip()
-    rating = data.get("rating") 
-    is_spoiler = data.get("is_spoiler") # 🌟 NAYA
-
-    if not review_text:
-        return jsonify({
-            "error": "Review cannot be empty"
-        }), 400
-
-    with engine.begin() as conn:
-        # Check that this review belongs to logged-in user
-        review = conn.execute(
-            text("""
-                SELECT review_id
-                FROM reviews
-                WHERE review_id = :review_id
-                AND user_id = :user_id
-            """),
-            {
-                "review_id": review_id,
-                "user_id": user_id
-            }
-        ).first()
-
-        if review is None:
-            return jsonify({
-                "error": "Review not found or you are not allowed to edit it"
-            }), 404
-
-        # Update Query
-        update_query = """
-            UPDATE reviews
-            SET review_text = :review_text
-        """
-        params = {
-            "review_text": review_text,
-            "review_id": review_id,
-            "user_id": user_id
-        }
-
-        if rating is not None:
-            update_query += ", rating = :rating"
-            params["rating"] = rating
-            
-        if is_spoiler is not None:
-            update_query += ", is_spoiler = :is_spoiler"
-            params["is_spoiler"] = is_spoiler
-
-        update_query += " WHERE review_id = :review_id AND user_id = :user_id"
-
-        conn.execute(text(update_query), params)
-
-    return jsonify({
-        "message": "Review updated successfully",
-        "review_id": review_id,
-        "review_text": review_text
-    }), 200
-
-
-# Delete user's own review
-@review_bp.route("/reviews/<int:review_id>", methods=["DELETE"])
-@token_required
-def delete_review(review_id):
-    user_id = g.user_id
-
-    with engine.begin() as conn:
-        review = conn.execute(
-            text("""
-                SELECT review_id
-                FROM reviews
-                WHERE review_id = :review_id
-                AND user_id = :user_id
-            """),
-            {
-                "review_id": review_id,
-                "user_id": user_id
-            }
-        ).first()
-
-        if review is None:
-            return jsonify({
-                "error": "Review not found or you are not allowed to delete it"
-            }), 404
-
-        conn.execute(
-            text("""
-                DELETE FROM reviews
-                WHERE review_id = :review_id
-                AND user_id = :user_id
-            """),
-            {
-                "review_id": review_id,
-                "user_id": user_id
-            }
-        )
-
-    return jsonify({
-        "message": "Review deleted successfully",
-        "review_id": review_id
-    }), 200
-
-
-# Toggle Like
-# Toggle Like
-@review_bp.route("/reviews/<int:review_id>/like", methods=["POST"])
-@token_required
-def toggle_like_review(review_id):
-    user_id = g.user_id
-
-    try:
-        with engine.begin() as conn:
-            review = conn.execute(
-                text("""
-                    SELECT r.review_id, r.user_id as owner_id, r.likes, m.title 
-                    FROM reviews r
-                    JOIN movies m ON r.movie_id = m.movie_id 
-                    WHERE r.review_id = :r
-                """),
-                {"r": review_id}
-            ).mappings().first()
-
-            if not review:
-                return jsonify({"error": "Review not found"}), 404
-
-            existing_like = conn.execute(
-                text("SELECT review_id FROM review_likes WHERE review_id = :r AND user_id = :u"),
-                {"r": review_id, "u": user_id}
-            ).first()
-
-            if existing_like:
-                conn.execute(
-                    text("DELETE FROM review_likes WHERE review_id = :r AND user_id = :u"),
-                    {"r": review_id, "u": user_id}
-                )
-                # 🔥 FIX: GREATEST wapas laga diya!
-                conn.execute(
-                    text("UPDATE reviews SET likes = GREATEST(likes - 1, 0) WHERE review_id = :r"),
-                    {"r": review_id}
-                )
-                action = "unliked"
-                new_likes = max(0, review["likes"] - 1)
-            else:
-                conn.execute(
-                    text("INSERT INTO review_likes (review_id, user_id) VALUES (:r, :u)"),
-                    {"r": review_id, "u": user_id}
-                )
-                conn.execute(
-                    text("UPDATE reviews SET likes = likes + 1 WHERE review_id = :r"),
-                    {"r": review_id}
-                )
-                
-                # 🔥 NOTIFICATION TRIGGER
-                if review["owner_id"] != user_id:
-                    sender = conn.execute(
-                        text("SELECT username FROM users WHERE user_id = :u"), 
-                        {"u": user_id}
-                    ).mappings().first()
-                    
-                    sender_name = sender["username"] if sender else "Someone"
-                    
-                    conn.execute(text("""
-                        INSERT INTO notifications (user_id, sender_id, message, type) 
-                        VALUES (:owner, :sender, :msg, 'like')
-                    """), {
-                        "owner": review["owner_id"], 
-                        "sender": user_id, 
-                        "msg": f"@{sender_name} liked your review on {review['title']}."
-                    })
-
-                action = "liked"
-                new_likes = review["likes"] + 1
-
-        return jsonify({
-            "message": f"Review {action} successfully",
-            "liked": action == "liked",
-            "likes_count": new_likes
-        }), 200
-
-    except Exception as e:
-        print(f"LIKE TOGGLE ERROR: {e}")
-        return jsonify({"error": "Failed to toggle like"}), 500
-
-
-# Get Single Review
-@review_bp.route("/review/<int:review_id>", methods=["GET"])
-@token_required
-def get_single_review(review_id):
-    with engine.connect() as conn:
-        review = conn.execute(
-            text("""
-                SELECT
-                    r.review_id,
-                    r.user_id,
-                    u.username,
-                    r.movie_id,
-                    m.title,
-                    r.review_text,
-                    r.rating,
-                    r.is_spoiler, -- 🌟 NAYA
-                    r.likes,
-                    r.created_at
-                FROM reviews r
-                JOIN users u
-                    ON r.user_id = u.user_id
-                JOIN movies m
-                    ON r.movie_id = m.movie_id
-                WHERE r.review_id = :review_id
-            """),
-            {
-                "review_id": review_id
-            }
-        ).mappings().first()
-
-    if review is None:
-        return jsonify({
-            "error": "Review not found"
-        }), 404
-
-    return jsonify(dict(review)), 200
-
-
-# Get User Profile Details
-@review_bp.route("/profile/<int:target_user_id>", methods=["GET"])
-@token_required
-def get_user_profile(target_user_id):
-    with engine.connect() as conn:
-        user_info = conn.execute(
-            text("""
-                SELECT user_id, username 
-                FROM users 
-                WHERE user_id = :u
-            """),
-            {"u": target_user_id}
-        ).mappings().first()
-
-        if not user_info:
-            return jsonify({"error": "User not found"}), 404
-
-        user_reviews = conn.execute(
-            text("""
-                SELECT 
-                    r.review_id, r.movie_id, r.review_text, r.rating, r.likes, r.created_at, r.is_spoiler, -- 🌟 NAYA
-                    m.title, m.poster_url
-                FROM reviews r
-                JOIN movies m ON r.movie_id = m.movie_id
-                WHERE r.user_id = :u
-                ORDER BY r.created_at DESC
-            """),
-            {"u": target_user_id}
-        ).mappings().all()
-
-    return jsonify({
-        "user": dict(user_info),
-        "total_reviews": len(user_reviews),
-        "reviews": [dict(row) for row in user_reviews]
-    }), 200
-</file>
-
 <file path="app.py">
-from flask import Flask, request, jsonify
-from flask_socketio import SocketIO, join_room, emit
+# File Path: app.py
+import os
+from flask import Flask, jsonify
+from flask_socketio import SocketIO
 from flask_cors import CORS
+
+from backend.config import CORS_ORIGINS
+from backend.extensions import mail, limiter
 from backend.routes.movies import movies_bp
 from backend.routes.recommendation import recommendation_bp
 from backend.routes.search import search_bp
@@ -38712,45 +40132,30 @@ from backend.routes.auth import auth_bp
 from backend.routes.watchlist import watchlist_bp
 from backend.routes.rating import rating_bp
 from backend.routes.review import review_bp
-from backend.routes.profile import profile_bp,social_bp
+from backend.routes.profile import profile_bp, social_bp
 from backend.routes.preferences import preferences_bp
 from backend.routes.home import home_bp
 from backend.routes.collections import collections_bp
-from backend.extensions import mail
 from backend.chat_routes import chat_bp
 from backend.chat_sockets import register_chat_sockets
 
-import os
-import random
-
-
-
 app = Flask(__name__)
-CORS(app)
 
-app.config['MAIL_SERVER'] = 'smtp.gmail.com'
-app.config['MAIL_PORT'] = 465
-app.config['MAIL_USERNAME'] = os.getenv('MAIL_USERNAME')
-app.config['MAIL_PASSWORD'] = os.getenv('MAIL_PASSWORD')
-app.config['MAIL_USE_TLS'] = False
-app.config['MAIL_USE_SSL'] = True
+# 🚀 P2 FIX #18: Restricted CORS to allowed frontend origins
+CORS(app, origins=CORS_ORIGINS, supports_credentials=True)
+
+app.config["MAIL_SERVER"] = "smtp.gmail.com"
+app.config["MAIL_PORT"] = 465
+app.config["MAIL_USERNAME"] = os.getenv("MAIL_USERNAME")
+app.config["MAIL_PASSWORD"] = os.getenv("MAIL_PASSWORD")
+app.config["MAIL_USE_TLS"] = False
+app.config["MAIL_USE_SSL"] = True
 
 mail.init_app(app)
+limiter.init_app(app)
 
-socketio = SocketIO(app, cors_allowed_origins="*")
-
-# 🚀 Yeh ek helper function hai jo aage poore app mein OTP bhejne ke kaam aayega
-def send_otp_email(user_email, otp):
-    try:
-        msg = Message('Your MovieVerse Verification Code', 
-                      sender=app.config['MAIL_USERNAME'], 
-                      recipients=[user_email])
-        msg.body = f"Welcome to NEXUS! 🎬\n\nYour 6-digit verification code is: {otp}\n\nPlease don't share this code with anyone."
-        mail.send(msg)
-        return True
-    except Exception as e:
-        print("Mail Error:", e)
-        return False
+# 🚀 P2 FIX #18: Restricted SocketIO CORS to allowed origins
+socketio = SocketIO(app, cors_allowed_origins=CORS_ORIGINS)
 
 app.register_blueprint(movies_bp)
 app.register_blueprint(movie_bp)
@@ -38767,17 +40172,16 @@ app.register_blueprint(collections_bp)
 app.register_blueprint(social_bp)
 app.register_blueprint(chat_bp)
 
-
 register_chat_sockets(socketio)
 
 @app.route("/")
 def home():
-    return {
-        "message": "NEXUS API is Running "
-    }
+    return jsonify({"message": "NEXUS API is Running"}), 200
 
 if __name__ == "__main__":
-    socketio.run(app,debug=True,port=5000)
+    # 🚀 P0 FIX #6: Debug controlled via environment variable (defaults to False)
+    debug_mode = os.getenv("FLASK_DEBUG", "false").lower() == "true"
+    socketio.run(app, debug=debug_mode, port=5000)
 </file>
 
 </files>

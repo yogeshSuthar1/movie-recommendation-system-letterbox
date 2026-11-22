@@ -15,6 +15,13 @@ CREATE TABLE IF NOT EXISTS movies (
     poster_url TEXT
 );
 
+-- 🚀 P1 FIX #8 & #9: Base ratings table added directly to schema
+CREATE TABLE IF NOT EXISTS movie_base_ratings (
+    movie_id BIGINT PRIMARY KEY,
+    base_rating DECIMAL(3,2),
+    FOREIGN KEY (movie_id) REFERENCES movies(movie_id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS genres (
     genre_id INT AUTO_INCREMENT PRIMARY KEY,
     genre_name VARCHAR(100) NOT NULL UNIQUE
@@ -108,16 +115,21 @@ CREATE TABLE IF NOT EXISTS movie_producers (
     FOREIGN KEY (producer_id) REFERENCES producers(producer_id) ON DELETE CASCADE
 );
 
--- 3. Users & Authentication
+-- 3. Users & Authentication (🚀 P0 FIX #2: Hashed OTP, Expiry & Attempt Lockout Columns)
 CREATE TABLE IF NOT EXISTS users (
     user_id INT AUTO_INCREMENT PRIMARY KEY,
-    username VARCHAR(100) NOT NULL UNIQUE, /* UNIQUE lagaya taaki duplicate naam na aaye */
+    username VARCHAR(100) NOT NULL UNIQUE,
     email VARCHAR(255) NOT NULL UNIQUE,
     password_hash VARCHAR(255) NOT NULL,
     profile_image TEXT,
     bio TEXT,
     is_verified TINYINT(1) NOT NULL DEFAULT 0,
-    otp VARCHAR(10) DEFAULT NULL,
+    otp VARCHAR(255) DEFAULT NULL,
+    otp_expires_at DATETIME DEFAULT NULL,
+    otp_attempts INT NOT NULL DEFAULT 0,
+    reset_otp VARCHAR(255) DEFAULT NULL,
+    reset_otp_expires_at DATETIME DEFAULT NULL,
+    reset_otp_attempts INT NOT NULL DEFAULT 0,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -131,11 +143,13 @@ CREATE TABLE IF NOT EXISTS followers (
     FOREIGN KEY (following_id) REFERENCES users(user_id) ON DELETE CASCADE
 );
 
+-- 🚀 P1 FIX #8: Added is_read column to chat_messages
 CREATE TABLE IF NOT EXISTS chat_messages (
     message_id BIGINT AUTO_INCREMENT PRIMARY KEY,
     sender_id INT NOT NULL,
     receiver_id INT NOT NULL,
     message TEXT NOT NULL,
+    is_read TINYINT(1) NOT NULL DEFAULT 0,
     sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (sender_id) REFERENCES users(user_id) ON DELETE CASCADE,
     FOREIGN KEY (receiver_id) REFERENCES users(user_id) ON DELETE CASCADE
@@ -173,6 +187,7 @@ CREATE TABLE IF NOT EXISTS ratings (
     FOREIGN KEY (movie_id) REFERENCES movies(movie_id) ON DELETE CASCADE
 );
 
+-- 🚀 P1 FIX #11: Added UNIQUE KEY (user_id, movie_id) to prevent duplicate reviews
 CREATE TABLE IF NOT EXISTS reviews (
     review_id BIGINT AUTO_INCREMENT PRIMARY KEY,
     user_id INT NOT NULL,
@@ -182,6 +197,7 @@ CREATE TABLE IF NOT EXISTS reviews (
     is_spoiler TINYINT(1) NOT NULL DEFAULT 0,
     likes INT DEFAULT 0,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_user_movie_review (user_id, movie_id),
     FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
     FOREIGN KEY (movie_id) REFERENCES movies(movie_id) ON DELETE CASCADE
 );

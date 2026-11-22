@@ -1,5 +1,7 @@
+// File Path: Frontend_react/src/pages/GenreSelection.jsx
 import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { API_BASE_URL } from "../config/api";
 import "../styles/genre-selection.css";
 
 const genres = [
@@ -51,19 +53,18 @@ export default function GenreSelection() {
     setError("");
 
     try {
-      // 🌟 Map selected IDs to actual genre names (strings) so backend receives a list of strings
       const selectedGenreNames = genres
         .filter((genre) => selectedGenres.includes(genre.id))
         .map((genre) => genre.name);
 
-      const response = await fetch("http://127.0.0.1:5000/preferences", {
+      const response = await fetch(`${API_BASE_URL}/preferences`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           "Authorization": `Bearer ${token}`
         },
         body: JSON.stringify({
-          genres: selectedGenreNames // 👈 Sending names array to match backend string expectation
+          genres: selectedGenreNames
         })
       });
 
@@ -77,7 +78,6 @@ export default function GenreSelection() {
 
       localStorage.setItem("selectedGenres", JSON.stringify(selectedGenreNames));
       navigate("/home");
-
     } catch (err) {
       console.error("Preference connection error:", err);
       setError("Unable to connect to server.");
@@ -99,9 +99,7 @@ export default function GenreSelection() {
         <div className="genre-header">
           <div className="genre-icon">🎬</div>
           <h1>Tell us what you love</h1>
-          <p>
-            Choose a few genres you enjoy and we'll personalize your MovieVerse experience.
-          </p>
+          <p>Choose a few genres you enjoy and we'll personalize your MovieVerse experience.</p>
         </div>
 
         <div className="selection-info">
@@ -127,22 +125,15 @@ export default function GenreSelection() {
           })}
         </div>
 
-        {error && (
-          <div style={{ color: "#ff4757", textAlign: "center", marginBottom: "15px", fontSize: "14px" }}>
-            {error}
-          </div>
-        )}
+        {error && <div style={{ color: "#ff4757", textAlign: "center", marginBottom: "15px", fontSize: "14px" }}>{error}</div>}
 
         <div className="genre-bottom">
           {selectedGenres.length < 3 ? (
             <p className="genre-hint">
-              Select {3 - selectedGenres.length} more
-              {3 - selectedGenres.length === 1 ? " genre" : " genres"}
+              Select {3 - selectedGenres.length} more {3 - selectedGenres.length === 1 ? " genre" : " genres"}
             </p>
           ) : (
-            <p className="genre-ready">
-              Great! Your recommendations are ready.
-            </p>
+            <p className="genre-ready">Great! Your recommendations are ready.</p>
           )}
 
           <button

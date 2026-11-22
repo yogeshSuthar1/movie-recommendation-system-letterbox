@@ -1,0 +1,90 @@
+/* File Path: Frontend_react/src/styles/skeleton.css */
+.shimmer {
+    background: #1a1a24;
+    background-image: linear-gradient(to right, #1a1a24 0%, #2a2a35 20%, #1a1a24 40%, #1a1a24 100%);
+    background-repeat: no-repeat;
+    background-size: 800px 100%; 
+    animation-duration: 1.5s;
+    animation-fill-mode: forwards; 
+    animation-iteration-count: infinite;
+    animation-name: placeholderShimmer;
+    animation-timing-function: linear;
+    border-radius: 8px;
+}
+
+@keyframes placeholderShimmer {
+    0% { background-position: -468px 0; }
+    100% { background-position: 468px 0; }
+}
+
+/* Home Row Loader */
+.skeleton-row-container {
+    padding: 0 50px 40px 50px;
+    margin-bottom: 20px;
+}
+.skeleton-title {
+    width: 250px;
+    height: 24px;
+    margin-bottom: 20px;
+}
+.skeleton-row {
+    display: flex;
+    gap: 85px;
+    overflow: hidden;
+}
+.skeleton-card {
+    flex: 0 0 240px;
+    height: 360px;
+    border-radius: 12px;
+}
+
+/* Explore Grid Loader */
+.skeleton-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 25px;
+    width: 100%;
+    margin-top: 20px;
+}
+.skeleton-grid-card {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+.skeleton-poster {
+    width: 100%;
+    aspect-ratio: 2/3;
+    border-radius: 12px;
+}
+.skeleton-text {
+    height: 16px;
+    width: 80%;
+}
+.skeleton-text.short { width: 90%; }
+.skeleton-text.shorter { width: 60%; }
+
+/* Hero Loader */
+.skeleton-hero {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 100px 50px 50px 50px;
+    gap: 50px;
+    width: 100%;
+    max-width: 1500px;
+    margin: 0 auto;
+    min-height: 85vh;
+}
+.skeleton-hero-content {
+    flex: 1;
+    max-width: 650px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+}
+.skeleton-badge { width: 150px; height: 30px; border-radius: 20px; }
+.skeleton-hero-title { width: 80%; height: 60px; }
+.skeleton-hero-meta { width: 250px; height: 25px; }
+.skeleton-hero-desc { width: 100%; height: 20px; }
+.skeleton-hero-actions { width: 350px; height: 50px; border-radius: 12px; margin-top: 20px; }
+.skeleton-hero-poster { flex-shrink: 0; width: 320px; height: 480px; border-radius: 16px; }

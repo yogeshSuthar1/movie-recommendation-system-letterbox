@@ -1,19 +1,44 @@
+// File Path: Frontend_react/src/components/SearchModal.jsx
 import React, { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
-import { performSearch, getSearchHistory, clearSearchHistory, toggleFollowUser } from "../services/homeService";
-import "../styles/searchModal.css"; 
+import { API_BASE_URL } from "../config/api";
+import {
+  performSearch,
+  saveSearchQuery,
+  getSearchHistory,
+  clearSearchHistory,
+  getFollowingList
+} from "../services/homeService";
+import "../styles/searchModal.css";
 
 export default function SearchModal({ isOpen, onClose }) {
   const [searchTerm, setSearchTerm] = useState("");
-  const [searchType, setSearchType] = useState("movie"); // "movie" or "user"
+  const [searchType, setSearchType] = useState("movie"); // "movie", "actor", or "user"
   const [results, setResults] = useState([]);
   const [history, setHistory] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [followStatus, setFollowStatus] = useState({}); // Tracking follow states
+  const [followStatus, setFollowStatus] = useState({});
 
+  const loggedInUserId = localStorage.getItem("user_id");
+  const token = localStorage.getItem("token");
+
+  // 1. Escape Key Handler to close modal
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e) => {
+      if (e.key === "Escape") {
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isOpen, onClose]);
+
+  // 2. Load Search History & Initial Following Status on Open
   useEffect(() => {
     if (isOpen) {
       fetchHistory();
+      fetchInitialFollowing();
     } else {
       setSearchTerm("");
       setResults([]);
@@ -22,7 +47,23 @@ export default function SearchModal({ isOpen, onClose }) {
 
   const fetchHistory = async () => {
     const hist = await getSearchHistory();
-    setHistory(hist);
+    setHistory(Array.isArray(hist) ? hist : []);
+  };
+
+  const fetchInitialFollowing = async () => {
+    if (!loggedInUserId) return;
+    try {
+      const followingList = await getFollowingList(loggedInUserId);
+      if (Array.isArray(followingList)) {
+        const statusMap = {};
+        followingList.forEach((u) => {
+          statusMap[u.user_id] = "Following";
+        });
+        setFollowStatus(statusMap);
+      }
+    } catch (err) {
+      console.error("Failed to fetch following status:", err);
+    }
   };
 
   const handleClearHistory = async () => {
@@ -30,15 +71,46 @@ export default function SearchModal({ isOpen, onClose }) {
     if (success) setHistory([]);
   };
 
-  const handleFollowAction = async (e, userId) => {
-    e.preventDefault(); // Link par click hone se roke
+  // 🚀 P1 FIX #15: Save search query only on Enter or clicking a result
+  const handleResultClick = (labelToSave) => {
+    const queryToSave = (labelToSave || searchTerm || "").trim();
+    if (queryToSave.length >= 2) {
+      saveSearchQuery(queryToSave);
+    }
+    onClose();
+  };
+
+  const handleInputKeyDown = async (e) => {
+    if (e.key === "Enter" && searchTerm.trim().length >= 2) {
+      await saveSearchQuery(searchTerm.trim());
+      fetchHistory();
+    }
+  };
+
+  // 3. Secure Token-based Follow Toggle
+  const handleFollowAction = async (e, targetUserId) => {
+    e.preventDefault();
     e.stopPropagation();
-    const res = await toggleFollowUser(userId);
-    if (res && res.status) {
-      setFollowStatus(prev => ({
-        ...prev,
-        [userId]: res.status === "followed" ? "Following" : "Follow"
-      }));
+    if (!token) return;
+
+    try {
+      const res = await fetch(`${API_BASE_URL}/user/${targetUserId}/follow`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
+        }
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        setFollowStatus((prev) => ({
+          ...prev,
+          [targetUserId]: data.status === "followed" || data.is_following ? "Following" : "Follow"
+        }));
+      }
+    } catch (err) {
+      console.error("Follow action failed:", err);
     }
   };
 
@@ -46,62 +118,65 @@ export default function SearchModal({ isOpen, onClose }) {
     const delayDebounceFn = setTimeout(async () => {
       if (searchTerm.trim().length > 1) {
         setLoading(true);
-        const data = await performSearch(searchTerm, searchType);
-        setResults(data);
+        const data = await performSearch(searchTerm, searchType, false);
+        setResults(Array.isArray(data) ? data : []);
         setLoading(false);
       } else {
         setResults([]);
       }
-    }, 500); 
+    }, 400);
 
     return () => clearTimeout(delayDebounceFn);
-  }, [searchTerm, searchType]); 
+  }, [searchTerm, searchType]);
 
   if (!isOpen) return null;
 
   return (
     <div className="search-overlay" onClick={onClose}>
       <div className="search-modal-content" onClick={(e) => e.stopPropagation()}>
-        
         <div className="search-input-wrapper">
           <svg className="search-icon-inside" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#888" strokeWidth="2">
             <circle cx="11" cy="11" r="8"></circle>
             <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
           </svg>
-          <input 
-            type="text" 
-            placeholder={`Search for ${searchType}s...`} 
+          <input
+            type="text"
+            placeholder={`Search for ${searchType}s...`}
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
+            onKeyDown={handleInputKeyDown}
             autoFocus
           />
           <button className="close-search-btn" onClick={onClose}>ESC</button>
         </div>
 
         <div className="search-tabs">
-          <button 
+          <button
             className={`s-tab ${searchType === "movie" ? "active" : ""}`}
             onClick={() => setSearchType("movie")}
           >Movies</button>
-          <button className={`s-tab ${searchType === "actor" ? "active" : ""}`} onClick={() => setSearchType("actor")}>Actors</button>
-          <button 
+          <button
+            className={`s-tab ${searchType === "actor" ? "active" : ""}`}
+            onClick={() => setSearchType("actor")}
+          >Actors</button>
+          <button
             className={`s-tab ${searchType === "user" ? "active" : ""}`}
             onClick={() => setSearchType("user")}
           >Users</button>
         </div>
-        
+
         <div className="search-results-container">
           {loading && <p className="search-msg">Searching...</p>}
-          
+
           {!loading && searchTerm.length < 2 && history.length > 0 && (
             <div className="search-history-section">
               <div className="sh-header">
                 <h4>Recent Searches</h4>
                 <button onClick={handleClearHistory} className="clear-hist-btn">Clear All</button>
               </div>
-              {history.slice(0, 5).map(item => (
-                <div 
-                  key={item.history_id} 
+              {history.slice(0, 8).map((item) => (
+                <div
+                  key={item.history_id}
                   className="history-item"
                   onClick={() => setSearchTerm(item.search_query)}
                 >
@@ -120,37 +195,82 @@ export default function SearchModal({ isOpen, onClose }) {
               {results.map((item, idx) => {
                 if (searchType === "movie") {
                   return (
-                    <Link to={`/movie/${item.movie_id}`} key={idx} className="search-result-card" onClick={onClose}>
+                    <Link
+                      to={`/movie/${item.movie_id}`}
+                      key={item.movie_id || idx}
+                      className="search-result-card"
+                      onClick={() => handleResultClick(item.title)}
+                    >
                       <div className="src-poster-wrapper">
                         <img src={item.poster_url} alt={item.title} className="src-poster" />
                       </div>
                       <div className="src-info">
                         <h4>{item.title}</h4>
-                        <span>{item.release_year} • ⭐ {item.avg_rating}</span>
+                        <span>{item.release_year} • ⭐ {item.avg_rating || "N/A"}</span>
                       </div>
                     </Link>
                   );
                 } else if (searchType === "user") {
+                  const isFollowing = followStatus[item.user_id] === "Following";
+                  const validAvatar =
+                    item.profile_image && /^https?:\/\//i.test(item.profile_image)
+                      ? item.profile_image
+                      : null;
+
                   return (
-                    <Link to={`/profile/${item.user_id}`} key={idx} className="search-result-card" onClick={onClose}>
-                      <div className="src-avatar">
-                        {item.username.charAt(0).toUpperCase()}
+                    <Link
+                      to={`/profile/${item.user_id}`}
+                      key={item.user_id || idx}
+                      className="search-result-card"
+                      onClick={() => handleResultClick(item.username)}
+                      style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}
+                    >
+                      <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+                        <div className="src-avatar">
+                          {validAvatar ? (
+                            <img src={validAvatar} alt={item.username} />
+                          ) : (
+                            item.username.charAt(0).toUpperCase()
+                          )}
+                        </div>
+                        <div className="src-info">
+                          <h4>@{item.username}</h4>
+                        </div>
                       </div>
-                      <div className="src-info">
-                        <h4>@{item.username}</h4>
-                      </div>
+                      {Number(item.user_id) !== Number(loggedInUserId) && (
+                        <button
+                          onClick={(e) => handleFollowAction(e, item.user_id)}
+                          style={{
+                            padding: "6px 14px",
+                            borderRadius: "20px",
+                            fontSize: "12px",
+                            fontWeight: "600",
+                            cursor: "pointer",
+                            background: isFollowing ? "transparent" : "var(--primary-accent)",
+                            color: "#fff",
+                            border: isFollowing ? "1px solid rgba(255,255,255,0.25)" : "none"
+                          }}
+                        >
+                          {isFollowing ? "Following" : "Follow"}
+                        </button>
+                      )}
                     </Link>
                   );
                 } else {
-                  // Actors Search Result Card
+                  const cleanActor = item.actor_name.split(" as ")[0];
                   return (
-                    <Link to={`/actor/${encodeURIComponent(item.actor_name.split(" as ")[0])}`} key={idx} className="search-result-card" onClick={onClose}>
+                    <Link
+                      to={`/actor/${encodeURIComponent(cleanActor)}`}
+                      key={idx}
+                      className="search-result-card"
+                      onClick={() => handleResultClick(cleanActor)}
+                    >
                       <div className="src-avatar" style={{ background: "linear-gradient(135deg, #1a4a6e, #1db954)" }}>
-                        {item.actor_name.charAt(0).toUpperCase()}
+                        {cleanActor.charAt(0).toUpperCase()}
                       </div>
                       <div className="src-info">
                         <h4 style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                          {item.actor_name.split(" as ")[0]}
+                          {cleanActor}
                         </h4>
                         <span style={{ fontSize: "12px", color: "#888" }}>Actor / Cast</span>
                       </div>
@@ -161,7 +281,6 @@ export default function SearchModal({ isOpen, onClose }) {
             </div>
           )}
         </div>
-
       </div>
     </div>
   );

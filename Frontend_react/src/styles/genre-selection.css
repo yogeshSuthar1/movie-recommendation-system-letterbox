@@ -96,7 +96,7 @@
 }
 
 .genre-logo span {
-  color: #9b5cff;
+  color: var(--primary-accent);
 }
 
 
@@ -388,7 +388,7 @@
     linear-gradient(
       135deg,
       #7438dc,
-      #9b5cff
+      var(--primary-accent)
     );
 
   color: white;

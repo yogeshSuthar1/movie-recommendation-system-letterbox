@@ -454,3 +454,65 @@
   letter-spacing: 1px;
   color: #d8b4fe;
 }
+
+/* MOBILE FIXES FOR HOME */
+@media (max-width: 900px) {
+  .hero-banner {
+    padding: 40px 20px;
+    min-height: auto;
+  }
+
+  .hero-container {
+    flex-direction: column-reverse; /* Text on bottom, poster on top */
+    align-items: center;
+    gap: 30px;
+    text-align: center;
+  }
+
+  .hero-content {
+    align-items: center;
+  }
+
+  .hero-title {
+    font-size: 36px;
+  }
+
+  .hero-meta {
+    justify-content: center;
+  }
+
+  .hero-actions {
+    flex-direction: column;
+    width: 100%;
+  }
+
+  .hero-actions .btn-play, 
+  .hero-actions .btn-watchlist {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .hero-poster-box {
+    width: 200px;
+    height: 300px;
+  }
+
+  .home-content {
+    padding: 0 20px 60px 20px;
+  }
+
+  .movie-row {
+    gap: 15px;
+    padding: 10px 5px 30px 5px;
+  }
+  
+  .movie-card {
+    flex: 0 0 160px;
+    width: 160px;
+  }
+
+  .see-more-card {
+    flex: 0 0 160px;
+    height: 240px;
+  }
+}

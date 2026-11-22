@@ -1,5 +1,7 @@
+// File Path: Frontend_react/src/pages/profile.jsx
 import React, { useState, useEffect } from "react";
 import { useParams, Link } from "react-router-dom";
+import { API_BASE_URL } from "../config/api"; // 🚀 FIX N4
 import SearchModal from "../components/SearchModal";
 import Navbar from "../components/Navbar";
 import { 
@@ -8,7 +10,6 @@ import {
   getUserCollections, 
   createCollection, 
   getCollectionDetails, 
-  toggleFollowUser, 
   getUserFollowStats,
   getUserReviews,
   getFollowersList, 
@@ -17,6 +18,15 @@ import {
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, Tooltip, ResponsiveContainer } from "recharts";
 import CinematicLoader from "../components/CinematicLoader";
 import "../styles/profile.css"; 
+
+const PRESET_AVATARS = [
+  "", 
+  "https://tse3.mm.bing.net/th/id/OIP.9vbmh3n9JcizPD5ecFmBUgHaHa?r=0&rs=1&pid=ImgDetMain&o=7&rm=3",
+  "https://tse4.mm.bing.net/th/id/OIP.PY1URYaJ4jhs8CvbhbPKlgHaHa?r=0&rs=1&pid=ImgDetMain&o=7&rm=3",
+  "https://tse3.mm.bing.net/th/id/OIP.W2Qrp2QmfDromFgPalLFwwAAAA?r=0&w=470&h=470&rs=1&pid=ImgDetMain&o=7&rm=3",
+  "https://tse2.mm.bing.net/th/id/OIP.pxTsssD9rMG8GTqKOfPu_wAAAA?r=0&w=270&h=270&rs=1&pid=ImgDetMain&o=7&rm=3",
+  "https://tse2.mm.bing.net/th/id/OIP.GX4T8ikMHvbVvt7effzc7AHaHa?r=0&rs=1&pid=ImgDetMain&o=7&rm=3"
+];
 
 export default function Profile() {
   const { id } = useParams();
@@ -36,24 +46,22 @@ export default function Profile() {
   const [newDesc, setNewDesc] = useState("");
   const [showCreateModal, setShowCreateModal] = useState(false);
 
-  // Collection Detail Modal States
   const [selectedCollection, setSelectedCollection] = useState(null);
   const [collectionMovies, setCollectionMovies] = useState([]);
   const [isColDetailOpen, setIsColDetailOpen] = useState(false);
 
-  // Edit Profile States (Username & Bio)
   const [showEditModal, setShowEditModal] = useState(false);
   const [editUsername, setEditUsername] = useState("");
   const [editBio, setEditBio] = useState("");
+  const [editAvatar, setEditAvatar] = useState(""); 
 
-  // Follow & Stats States
   const loggedInUserId = parseInt(localStorage.getItem("user_id"));
   const token = localStorage.getItem("token");
   const isMyProfile = loggedInUserId === parseInt(id);  
   const [isFollowing, setIsFollowing] = useState(false);
   const [followStats, setFollowStats] = useState({ followers_count: 0, following_count: 0 });
 
-  const COLORS = ["#9b5cff", "#1db954", "#f5c518", "#ff4757"];
+  const COLORS = ["var(--primary-accent)", "#1db954", "#f5c518", "#ff4757"];
   
   const [activeTab, setActiveTab] = useState("reviews");
   const [activeFilter, setActiveFilter] = useState("All");
@@ -72,10 +80,10 @@ export default function Profile() {
 
     if (type === "followers") {
       const data = await getFollowersList(id);
-      setFollowListData(data);
+      setFollowListData(data || []);
     } else {
       const data = await getFollowingList(id);
-      setFollowListData(data);
+      setFollowListData(data || []);
     }
   };
   
@@ -83,12 +91,13 @@ export default function Profile() {
     window.scrollTo(0, 0);
     const fetchData = async () => {
       setLoading(true);
-      const [pData, aData, cData, sData, rData] = await Promise.all([
+      const [pData, aData, cData, sData, rData, followersData] = await Promise.all([
         getUserProfile(id),
         getUserAnalytics(id),
         getUserCollections(id),
         getUserFollowStats(id),
-        getUserReviews(id)
+        getUserReviews(id),
+        getFollowersList(id)
       ]);
       
       setProfileData({
@@ -99,10 +108,18 @@ export default function Profile() {
       if (aData) setAnalyticsData(aData);
       if (cData) setCollections(cData);
       if (sData) setFollowStats(sData);
+
+      if (Array.isArray(followersData) && loggedInUserId) {
+        const alreadyFollowing = followersData.some(
+          (u) => Number(u.user_id) === Number(loggedInUserId)
+        );
+        setIsFollowing(alreadyFollowing);
+      }
+
       setLoading(false);
     };
     fetchData();
-  }, [id]);
+  }, [id, loggedInUserId]);
 
   const getInitials = (name) => {
     if (!name) return "";
@@ -132,38 +149,58 @@ export default function Profile() {
   const handleOpenEdit = () => {
     setEditUsername(profileData.user.username);
     setEditBio(profileData.user.bio || "");
+    setEditAvatar(profileData.user.profile_image || "");
     setShowEditModal(true);
   };
 
   const handleSaveProfile = async (e) => {
-    e.preventDefault(); 
+    e.preventDefault();
+    const cleanAvatar = (editAvatar || "").trim();
+    if (cleanAvatar && !/^https?:\/\//i.test(cleanAvatar)) {
+      alert("Please use a valid https:// image URL.");
+      return;
+    }
+
     try {
-      const res = await fetch("http://127.0.0.1:5000/user/edit", {
+      const res = await fetch(`${API_BASE_URL}/user/edit`, { // 🚀 FIX N4
         method: "POST",
         headers: {
-          "Content-Type": "application/json"
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
         },
-        body: JSON.stringify({ 
-          user_id: id, 
-          username: editUsername,
-          bio: editBio 
+        body: JSON.stringify({
+          username: editUsername.trim(),
+          bio: editBio,
+          profile_image: cleanAvatar
         })
       });
 
       if (res.ok) {
+        const cleanUsername = editUsername.trim();
+        localStorage.setItem("username", cleanUsername);
+        if (cleanAvatar) {
+          localStorage.setItem("profile_image", cleanAvatar);
+        } else {
+          localStorage.removeItem("profile_image");
+        }
+
         setProfileData((prev) => ({
           ...prev,
-          user: { ...prev.user, bio: editBio, username: editUsername } 
+          user: {
+            ...prev.user,
+            bio: editBio,
+            username: cleanUsername,
+            profile_image: cleanAvatar
+          }
         }));
-        alert("Profile saved successfully! 🎉");
         setShowEditModal(false);
       } else {
         const errData = await res.json();
-        alert(`Backend Error: ${errData.error || 'Failed to save profile'}`);
+        alert(errData.error || "Failed to save profile.");
       }
     } catch (error) {
-      console.error("Save profile crash:", error);
-      alert("Code crash ho gaya! Check console for errors.");
+      console.error("Save profile error:", error);
+      alert("Unable to update profile right now.");
     }
   };
 
@@ -191,19 +228,18 @@ export default function Profile() {
 
   const handleFollowToggle = async () => {
     try {
-      const res = await fetch(`http://127.0.0.1:5000/users/${id}/follow`, {
+      const res = await fetch(`${API_BASE_URL}/user/${id}/follow`, { // 🚀 FIX N4 & N7
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}` // 🔥 Token bhej rahe hain
+          "Authorization": `Bearer ${token}`
         }
       });
 
       if (res.ok) {
         const data = await res.json();
-        setIsFollowing(data.is_following);
+        setIsFollowing(Boolean(data.is_following));
         
-        // Follow dabane ke baad stats refresh karne ke liye
         const sData = await getUserFollowStats(id);
         setFollowStats(sData);
       } else {
@@ -226,7 +262,13 @@ export default function Profile() {
       <div className="profile-layout">
         <aside className="profile-sidebar">
           <div className="profile-card">
-            <div className="pc-avatar">{getInitials(profileData.user.username)}</div>
+            <div className="pc-avatar" style={{ background: profileData.user.profile_image ? "transparent" : "#3b4255", overflow: "hidden" }}>
+              {profileData.user.profile_image ? (
+                <img src={profileData.user.profile_image} alt="Avatar" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+              ) : (
+                getInitials(profileData.user.username)
+              )}
+            </div>
             <h2 className="pc-fullname">{profileData.user.username}</h2>
             <span className="pc-username">@{profileData.user.username.toLowerCase().replace(/\s/g, '_')}</span>
             
@@ -246,14 +288,14 @@ export default function Profile() {
                 👥 
                 <span 
                   onClick={() => handleOpenFollowModal("followers")} 
-                  style={{ cursor: "pointer", color: "#9b5cff", fontWeight: "600" }}
+                  style={{ cursor: "pointer", color: "var(--primary-accent)", fontWeight: "600" }}
                 >
                   {followStats.followers_count} Followers
                 </span> 
                 • 
                 <span 
                   onClick={() => handleOpenFollowModal("following")} 
-                  style={{ cursor: "pointer", color: "#9b5cff", fontWeight: "600" }}
+                  style={{ cursor: "pointer", color: "var(--primary-accent)", fontWeight: "600" }}
                 >
                   {followStats.following_count} Following
                 </span>
@@ -276,7 +318,7 @@ export default function Profile() {
                 className="btn-edit-profile" 
                 onClick={handleFollowToggle}
                 style={{
-                  background: isFollowing ? "transparent" : "#9b5cff",
+                  background: isFollowing ? "transparent" : "var(--primary-accent)",
                   color: "#fff",
                   border: isFollowing ? "1px solid rgba(255,255,255,0.2)" : "none",
                   fontWeight: "600",
@@ -345,14 +387,13 @@ export default function Profile() {
                           </div>
                           
                           <div className="pr-meta">
-                            Movie • {review.release_year || "2024"} • 
+                            Movie • {review.release_year || "Unknown"}
                             <span className="pr-star-display">
                               {" ★".repeat(Math.floor(review.rating || 0))}
                               {(review.rating || 0) % 1 !== 0 ? " ½" : ""}
                             </span>
                           </div>
                           
-                          {/* 🌟 Profile par Spoiler Blur Logic */}
                           <div style={{ position: 'relative', marginBottom: '10px' }}>
                             <p 
                               className="pr-review-text" 
@@ -403,7 +444,7 @@ export default function Profile() {
                   <button 
                     className="btn-create-col" 
                     onClick={() => setShowCreateModal(true)}
-                    style={{ background: "#9b5cff", color: "#fff", border: "none", padding: "8px 16px", borderRadius: "8px", cursor: "pointer", fontWeight: "600" }}
+                    style={{ background: "var(--primary-accent)", color: "#fff", border: "none", padding: "8px 16px", borderRadius: "8px", cursor: "pointer", fontWeight: "600" }}
                   >
                     + New Collection
                   </button>
@@ -445,7 +486,7 @@ export default function Profile() {
                     >
                       <h4 style={{ margin: "0 0 8px 0", fontSize: "18px", color: "#fff" }}>{col.title}</h4>
                       <p style={{ margin: "0 0 15px 0", color: "#888", fontSize: "14px" }}>{col.description || "No description provided."}</p>
-                      <span className="col-count" style={{ fontSize: "12px", color: "#9b5cff", fontWeight: "600" }}>🎬 {col.movie_count} Movies</span>
+                      <span className="col-count" style={{ fontSize: "12px", color: "var(--primary-accent)", fontWeight: "600" }}>🎬 {col.movie_count} Movies</span>
                     </div>
                   ))
                 )}
@@ -509,7 +550,7 @@ export default function Profile() {
                           cursor={{ fill: 'rgba(255,255,255,0.05)' }} 
                           contentStyle={{ backgroundColor: "#111", borderColor: "#333", color: "#fff" }} 
                         />
-                        <Bar dataKey="movies" fill="#9b5cff" radius={[6, 6, 0, 0]} />
+                        <Bar dataKey="movies" fill="var(--primary-accent)" radius={[6, 6, 0, 0]} />
                       </BarChart>
                     </ResponsiveContainer>
                   </div>
@@ -540,7 +581,7 @@ export default function Profile() {
                         <span style={{ fontSize: "13px", color: "#aaa" }}>{movie.release_year} • ⭐ {movie.avg_rating || "N/A"}</span>
                       </div>
                     </div>
-                    <span style={{ color: "#9b5cff", fontSize: "14px", fontWeight: "600" }}>View →</span>
+                    <span style={{ color: "var(--primary-accent)", fontSize: "14px", fontWeight: "600" }}>View →</span>
                   </Link>
                 ))
               )}
@@ -551,20 +592,48 @@ export default function Profile() {
         </div>
       )}
 
-      {/* EDIT PROFILE MODAL */}
+      {/* EDIT PROFILE MODAL (WITH AVATAR SELECTION) */}
       {showEditModal && (
         <div className="modal-overlay" onClick={() => setShowEditModal(false)}>
-          <div className="col-modal-content" style={{ maxWidth: "400px" }} onClick={(e) => e.stopPropagation()}>
+          <div className="col-modal-content" style={{ maxWidth: "450px" }} onClick={(e) => e.stopPropagation()}>
             <h3>Edit Profile</h3>
             
             <form onSubmit={handleSaveProfile}>
+              <label style={{ fontSize: "13px", color: "#aaa", display: "block", marginBottom: "10px" }}>Choose Avatar</label>
+              <div style={{ display: "flex", gap: "10px", marginBottom: "20px", flexWrap: "wrap" }}>
+                {PRESET_AVATARS.map((url, idx) => (
+                  <div 
+                    key={idx}
+                    onClick={() => setEditAvatar(url)}
+                    style={{
+                      width: "50px", height: "50px", borderRadius: "50%",
+                      background: url ? "transparent" : "#3b4255", 
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      cursor: "pointer", border: editAvatar === url ? "2px solid var(--primary-accent)" : "2px solid transparent",
+                      boxShadow: editAvatar === url ? "0 0 10px rgba(155, 92, 255, 0.5)" : "none",
+                      overflow: "hidden"
+                    }}
+                  >
+                    {url ? <img src={url} alt="Preset" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <span style={{ fontSize: "12px" }}>Aa</span>}
+                  </div>
+                ))}
+              </div>
+
+              <label style={{ fontSize: "13px", color: "#aaa", display: "block", marginBottom: "5px" }}>Or Paste Custom Photo URL</label>
+              <input 
+                type="text" 
+                placeholder="https://example.com/my-photo.jpg"
+                value={editAvatar} 
+                onChange={(e) => setEditAvatar(e.target.value)}
+                style={{ width: "100%", padding: "12px", background: "#1a1a20", border: "1px solid #444", color: "#fff", borderRadius: "6px", marginBottom: "20px", outline: "none" }}
+              />
+
               <label style={{ fontSize: "13px", color: "#aaa", display: "block", marginBottom: "5px" }}>Username</label>
               <input 
                 type="text" 
                 value={editUsername} 
                 onChange={(e) => setEditUsername(e.target.value)}
                 style={{ width: "100%", padding: "12px", background: "#1a1a20", border: "1px solid #444", color: "#fff", borderRadius: "6px", marginBottom: "15px", outline: "none" }}
-                autoFocus
               />
 
               <label style={{ fontSize: "13px", color: "#aaa", display: "block", marginBottom: "5px" }}>Bio</label>
@@ -576,8 +645,8 @@ export default function Profile() {
               />
               
               <div style={{ display: "flex", gap: "10px" }}>
-                <button type="submit" className="qc-save" style={{ flex: 1, padding: "10px" }}>Save Changes</button>
-                <button type="button" className="qc-cancel" onClick={() => setShowEditModal(false)} style={{ flex: 1, padding: "10px" }}>Cancel</button>
+                <button type="submit" className="qc-save" style={{ flex: 1, padding: "10px", background: "var(--primary-accent)", color: "#fff", border: "none", borderRadius: "6px", cursor: "pointer", fontWeight: "600" }}>Save Changes</button>
+                <button type="button" className="qc-cancel" onClick={() => setShowEditModal(false)} style={{ flex: 1, padding: "10px", background: "transparent", color: "#aaa", border: "1px solid #444", borderRadius: "6px", cursor: "pointer" }}>Cancel</button>
               </div>
             </form>
 
@@ -600,10 +669,7 @@ export default function Profile() {
                   <Link 
                     to={`/profile/${user.user_id}`} 
                     key={user.user_id} 
-                    onClick={() => {
-                      setShowFollowModal(false);
-                      setTimeout(() => window.location.reload(), 100);
-                    }}
+                    onClick={() => setShowFollowModal(false)}
                     style={{ 
                       display: "flex", alignItems: "center", gap: "15px", 
                       padding: "12px", background: "#1a1a20", borderRadius: "10px", 
@@ -611,8 +677,8 @@ export default function Profile() {
                       border: "1px solid rgba(255,255,255,0.05)"
                     }}
                   >
-                    <div style={{ width: "42px", height: "42px", borderRadius: "50%", background: "linear-gradient(135deg, #9b5cff, #47b8ff)", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: "bold", fontSize: "16px" }}>
-                      {user.username.charAt(0).toUpperCase()}
+                    <div style={{ width: "42px", height: "42px", borderRadius: "50%", background: user.profile_image ? "transparent" : "linear-gradient(135deg, var(--primary-accent), #47b8ff)", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: "bold", fontSize: "16px", overflow: "hidden" }}>
+                      {user.profile_image ? <img src={user.profile_image} style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : user.username.charAt(0).toUpperCase()}
                     </div>
                     <span style={{ fontSize: "16px", fontWeight: "600" }}>@{user.username}</span>
                   </Link>

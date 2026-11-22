@@ -1,28 +1,24 @@
-export async function getHomeData() {
+// File Path: Frontend_react/src/services/homeService.js
+import { API_BASE_URL } from "../config/api";
 
+export async function getHomeData() {
   const token = localStorage.getItem("token");
 
   if (!token) {
     throw new Error("User is not logged in");
   }
 
-  const response = await fetch(
-    "http://127.0.0.1:5000/home",
-    {
-      method: "GET",
-
-      headers: {
-        "Authorization": `Bearer ${token}`
-      }
+  const response = await fetch(`${API_BASE_URL}/home`, {
+    method: "GET",
+    headers: {
+      "Authorization": `Bearer ${token}`
     }
-  );
+  });
 
   const data = await response.json();
 
   if (!response.ok) {
-    throw new Error(
-      data.error || "Failed to load home data"
-    );
+    throw new Error(data.error || "Failed to load home data");
   }
 
   return data;
@@ -31,28 +27,22 @@ export async function getHomeData() {
 // Movie Detail fetch karne ka function
 export const getMovieDetail = async (movieId) => {
   try {
-    // Apne Flask server ka address check kar lena, normally 5000 port par hota hai.
-    const response = await fetch(`http://127.0.0.1:5000/movie/${movieId}`);
-    
+    const response = await fetch(`${API_BASE_URL}/movie/${movieId}`);
     if (!response.ok) {
       throw new Error("Failed to fetch movie details");
     }
-    
-    const data = await response.json();
-    return data;
+    return await response.json();
   } catch (error) {
     console.error("API Error in getMovieDetail:", error);
-    return null; // Return null taaki red screen handle ho sake
+    return null;
   }
 };
-
-
 
 // Toggle Review Like
 export const toggleReviewLike = async (reviewId) => {
   try {
-    const token = localStorage.getItem("token"); // Token zaroori hai
-    const response = await fetch(`http://127.0.0.1:5000/reviews/${reviewId}/like`, {
+    const token = localStorage.getItem("token");
+    const response = await fetch(`${API_BASE_URL}/reviews/${reviewId}/like`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -61,8 +51,7 @@ export const toggleReviewLike = async (reviewId) => {
     });
 
     if (!response.ok) throw new Error("Failed to toggle like");
-    
-    return await response.json(); // Yeh backend se {liked: true/false, likes_count: 5} layega
+    return await response.json();
   } catch (error) {
     console.error("API Error in toggleReviewLike:", error);
     return null;
@@ -70,18 +59,20 @@ export const toggleReviewLike = async (reviewId) => {
 };
 
 // Post a new review
-// postReview mein 'rating' add kiya
-export const postReview = async (movieId, reviewText, rating, isSpoiler=false ) => {
+export const postReview = async (movieId, reviewText, rating, isSpoiler = false) => {
   try {
     const token = localStorage.getItem("token");
-    const response = await fetch(`http://127.0.0.1:5000/reviews/${movieId}`, {
+    const response = await fetch(`${API_BASE_URL}/reviews/${movieId}`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         "Authorization": `Bearer ${token}`
       },
-      // Backend ko text aur rating dono bhej rahe hain
-      body: JSON.stringify({ review_text: reviewText, rating: rating ,is_spoiler: isSpoiler}) 
+      body: JSON.stringify({
+        review_text: reviewText,
+        rating: rating,
+        is_spoiler: Boolean(isSpoiler)
+      })
     });
 
     if (!response.ok) throw new Error("Failed to post review");
@@ -96,8 +87,7 @@ export const postReview = async (movieId, reviewText, rating, isSpoiler=false ) 
 export const getMovieReviews = async (movieId) => {
   try {
     const token = localStorage.getItem("token");
-    // 🌟 Yahan URL mein '/movie/' aur aage '/reviews' lagana hai
-    const response = await fetch(`http://127.0.0.1:5000/movie/${movieId}/reviews`, {
+    const response = await fetch(`${API_BASE_URL}/movie/${movieId}/reviews`, {
       method: "GET",
       headers: {
         "Content-Type": "application/json",
@@ -117,7 +107,10 @@ export const getMovieReviews = async (movieId) => {
 export const getUserProfile = async (userId) => {
   try {
     const token = localStorage.getItem("token");
-    const response = await fetch(`http://127.0.0.1:5000/profile/${userId}`, {
+    const loggedInUserId = localStorage.getItem("user_id");
+    const isMyOwnProfile = String(userId) === String(loggedInUserId);
+
+    const response = await fetch(`${API_BASE_URL}/profile/${userId}`, {
       method: "GET",
       headers: {
         "Content-Type": "application/json",
@@ -126,7 +119,20 @@ export const getUserProfile = async (userId) => {
     });
 
     if (!response.ok) throw new Error("Failed to fetch user profile");
-    return await response.json();
+    const data = await response.json();
+
+    const userObj = data.user ? data.user : data;
+
+    if (isMyOwnProfile && !userObj.profile_image) {
+      const savedAvatar = localStorage.getItem("profile_image");
+      if (savedAvatar) {
+        userObj.profile_image = savedAvatar;
+      }
+    } else if (userObj.profile_image && isMyOwnProfile) {
+      localStorage.setItem("profile_image", userObj.profile_image);
+    }
+
+    return { ...data, user: userObj };
   } catch (error) {
     console.error("API Error in getUserProfile:", error);
     return null;
@@ -137,12 +143,12 @@ export const getUserProfile = async (userId) => {
 export const getWatchlist = async () => {
   try {
     const token = localStorage.getItem("token");
-    const res = await fetch("http://127.0.0.1:5000/watchlist", {
+    const res = await fetch(`${API_BASE_URL}/watchlist`, {
       headers: { "Authorization": `Bearer ${token}` }
     });
     if (!res.ok) throw new Error("Failed to fetch watchlist");
     const data = await res.json();
-    return data.watchlist || []; // Tere backend ke JSON response se match kiya
+    return data.watchlist || [];
   } catch (error) {
     console.error("API Error in getWatchlist:", error);
     return [];
@@ -153,16 +159,15 @@ export const getWatchlist = async () => {
 export const addToWatchlist = async (movieId) => {
   try {
     const token = localStorage.getItem("token");
-    const res = await fetch(`http://127.0.0.1:5000/watchlist/${movieId}`, {
+    const res = await fetch(`${API_BASE_URL}/watchlist/${movieId}`, {
       method: "POST",
       headers: { "Authorization": `Bearer ${token}` }
     });
-    
+
     if (res.status === 409) {
-      alert("Movie is already in your watchlist!");
       return false;
     }
-    
+
     return res.ok;
   } catch (error) {
     console.error("API Error in addToWatchlist:", error);
@@ -174,7 +179,7 @@ export const addToWatchlist = async (movieId) => {
 export const removeFromWatchlist = async (movieId) => {
   try {
     const token = localStorage.getItem("token");
-    const res = await fetch(`http://127.0.0.1:5000/watchlist/${movieId}`, {
+    const res = await fetch(`${API_BASE_URL}/watchlist/${movieId}`, {
       method: "DELETE",
       headers: { "Authorization": `Bearer ${token}` }
     });
@@ -185,15 +190,18 @@ export const removeFromWatchlist = async (movieId) => {
   }
 };
 
-// Global Search (Movies & Users)
-export const performSearch = async (query, type = "movie") => {
+// Global Search (Movies, Actors & Users) - Does not spam history on debounce
+export const performSearch = async (query, type = "movie", save = false) => {
   if (!query) return [];
   try {
     const token = localStorage.getItem("token");
-    // URL mein type parameter bhej rahe hain
-    const res = await fetch(`http://127.0.0.1:5000/search?q=${encodeURIComponent(query)}&type=${type}`, {
-      headers: { "Authorization": `Bearer ${token}` }
-    });
+    const saveParam = save ? "&save=1" : "";
+    const res = await fetch(
+      `${API_BASE_URL}/search?q=${encodeURIComponent(query)}&type=${encodeURIComponent(type)}${saveParam}`,
+      {
+        headers: { "Authorization": `Bearer ${token}` }
+      }
+    );
     if (!res.ok) throw new Error("Search failed");
     return await res.json();
   } catch (error) {
@@ -202,11 +210,32 @@ export const performSearch = async (query, type = "movie") => {
   }
 };
 
+// 🚀 P1 FIX #15: Save search query explicitly only on Enter or Result Click
+export const saveSearchQuery = async (query) => {
+  const clean = (query || "").trim();
+  if (clean.length < 2) return false;
+  try {
+    const token = localStorage.getItem("token");
+    if (!token) return false;
+    const res = await fetch(`${API_BASE_URL}/search/history`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${token}`
+      },
+      body: JSON.stringify({ query: clean })
+    });
+    return res.ok;
+  } catch (error) {
+    return false;
+  }
+};
+
 // Get Search History
 export const getSearchHistory = async () => {
   try {
     const token = localStorage.getItem("token");
-    const res = await fetch(`http://127.0.0.1:5000/search/history`, {
+    const res = await fetch(`${API_BASE_URL}/search/history`, {
       headers: { "Authorization": `Bearer ${token}` }
     });
     if (!res.ok) return [];
@@ -221,7 +250,7 @@ export const getSearchHistory = async () => {
 export const clearSearchHistory = async () => {
   try {
     const token = localStorage.getItem("token");
-    const res = await fetch(`http://127.0.0.1:5000/search/history`, {
+    const res = await fetch(`${API_BASE_URL}/search/history`, {
       method: "DELETE",
       headers: { "Authorization": `Bearer ${token}` }
     });
@@ -233,7 +262,7 @@ export const clearSearchHistory = async () => {
 
 export const getUserAnalytics = async (userId) => {
   try {
-    const res = await fetch(`http://127.0.0.1:5000/profile/${userId}/analytics`);
+    const res = await fetch(`${API_BASE_URL}/profile/${userId}/analytics`);
     if (!res.ok) throw new Error("Analytics failed");
     return await res.json();
   } catch (error) {
@@ -244,7 +273,7 @@ export const getUserAnalytics = async (userId) => {
 
 export const getUserCollections = async (userId) => {
   try {
-    const res = await fetch(`http://127.0.0.1:5000/user/${userId}/collections`);
+    const res = await fetch(`${API_BASE_URL}/user/${userId}/collections`);
     if (!res.ok) return [];
     return await res.json();
   } catch (error) {
@@ -255,7 +284,7 @@ export const getUserCollections = async (userId) => {
 export const createCollection = async (title, description) => {
   try {
     const token = localStorage.getItem("token");
-    const res = await fetch(`http://127.0.0.1:5000/collections`, {
+    const res = await fetch(`${API_BASE_URL}/collections`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -272,7 +301,7 @@ export const createCollection = async (title, description) => {
 export const addMovieToCollection = async (collectionId, movieId) => {
   try {
     const token = localStorage.getItem("token");
-    const res = await fetch(`http://127.0.0.1:5000/collections/${collectionId}/movies`, {
+    const res = await fetch(`${API_BASE_URL}/collections/${collectionId}/movies`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -289,7 +318,7 @@ export const addMovieToCollection = async (collectionId, movieId) => {
 
 export const getCollectionDetails = async (collectionId) => {
   try {
-    const res = await fetch(`http://127.0.0.1:5000/collections/${collectionId}`);
+    const res = await fetch(`${API_BASE_URL}/collections/${collectionId}`);
     if (!res.ok) return null;
     return await res.json();
   } catch (error) {
@@ -299,7 +328,7 @@ export const getCollectionDetails = async (collectionId) => {
 
 export const searchUsers = async (query) => {
   try {
-    const res = await fetch(`http://127.0.0.1:5000/users/search?q=${query}`);
+    const res = await fetch(`${API_BASE_URL}/users/search?q=${encodeURIComponent(query || "")}`);
     if (!res.ok) return [];
     return await res.json();
   } catch (error) {
@@ -310,15 +339,12 @@ export const searchUsers = async (query) => {
 export const toggleFollowUser = async (targetUserId) => {
   try {
     const token = localStorage.getItem("token");
-    const currentUserId = localStorage.getItem("user_id"); // NAYA: Logged-in user ki ID
-    
-    const res = await fetch(`http://127.0.0.1:5000/user/${targetUserId}/follow`, {
+    const res = await fetch(`${API_BASE_URL}/user/${targetUserId}/follow`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         "Authorization": `Bearer ${token}`
-      },
-      body: JSON.stringify({ current_user_id: currentUserId }) // Body mein ID bhej rahe hain
+      }
     });
     return await res.json();
   } catch (error) {
@@ -328,7 +354,7 @@ export const toggleFollowUser = async (targetUserId) => {
 
 export const getUserFollowStats = async (userId) => {
   try {
-    const res = await fetch(`http://127.0.0.1:5000/user/${userId}/stats`);
+    const res = await fetch(`${API_BASE_URL}/user/${userId}/stats`);
     if (!res.ok) return { followers_count: 0, following_count: 0 };
     return await res.json();
   } catch (error) {
@@ -336,30 +362,11 @@ export const getUserFollowStats = async (userId) => {
   }
 };
 
-
-export const updateUserProfile = async (userId, updateData) => {
-  try {
-    const token = localStorage.getItem("token");
-    const res = await fetch(`http://127.0.0.1:5000/profile/${userId}`, {
-      method: "PUT",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${token}`
-      },
-      body: JSON.stringify(updateData) // { username, bio } pass karenge
-    });
-    const data = await res.json();
-    return { success: res.ok, message: data.message || data.error };
-  } catch (error) {
-    return { success: false, message: "Network error" };
-  }
-};
-
-
 export const getActorMovies = async (actorName, page = 1, sortBy = "year") => {
   try {
-    // 🌟 NAYA: URL mein query parameters add kar diye
-    const response = await fetch(`http://127.0.0.1:5000/actor/${encodeURIComponent(actorName)}?page=${page}&sort_by=${sortBy}`);
+    const response = await fetch(
+      `${API_BASE_URL}/actor/${encodeURIComponent(actorName)}?page=${page}&sort_by=${encodeURIComponent(sortBy)}`
+    );
     if (!response.ok) throw new Error("Failed to fetch actor movies");
     return await response.json();
   } catch (error) {
@@ -370,7 +377,7 @@ export const getActorMovies = async (actorName, page = 1, sortBy = "year") => {
 
 export const getFollowersList = async (userId) => {
   try {
-    const res = await fetch(`http://127.0.0.1:5000/user/${userId}/followers`);
+    const res = await fetch(`${API_BASE_URL}/user/${userId}/followers`);
     if (!res.ok) return [];
     return await res.json();
   } catch (error) {
@@ -380,7 +387,7 @@ export const getFollowersList = async (userId) => {
 
 export const getFollowingList = async (userId) => {
   try {
-    const res = await fetch(`http://127.0.0.1:5000/user/${userId}/following`);
+    const res = await fetch(`${API_BASE_URL}/user/${userId}/following`);
     if (!res.ok) return [];
     return await res.json();
   } catch (error) {
@@ -390,7 +397,7 @@ export const getFollowingList = async (userId) => {
 
 export const getUserReviews = async (userId) => {
   try {
-    const response = await fetch(`http://127.0.0.1:5000/user/${userId}/reviews`);
+    const response = await fetch(`${API_BASE_URL}/user/${userId}/reviews`);
     if (!response.ok) throw new Error("Failed to fetch user reviews");
     return await response.json();
   } catch (error) {
@@ -401,33 +408,32 @@ export const getUserReviews = async (userId) => {
 
 export const getMovieTrailerKey = async (title, year) => {
   try {
-    const res = await fetch(`http://127.0.0.1:5000/movie/trailer?title=${encodeURIComponent(title)}&year=${encodeURIComponent(year || "")}`);
+    const token = localStorage.getItem("token");
+    const res = await fetch(
+      `${API_BASE_URL}/movie/trailer?title=${encodeURIComponent(title)}&year=${encodeURIComponent(year || "")}`,
+      { headers: { "Authorization": `Bearer ${token}` } }
+    );
     const data = await res.json();
-    if (res.ok && data.videoId) {
-      return data.videoId; // 👈 Sahi 11-character video ID aani chahiye
-    }
-    return null;
+    return res.ok && data.videoId ? data.videoId : null;
   } catch (error) {
-    console.error("Trailer API Fetch Error:", error);
     return null;
   }
 };
 
-// 🎲 Get Surprise Movie
+// Get Surprise Movie
 export const getSurpriseMovie = async () => {
   try {
     const token = localStorage.getItem("token");
-    const response = await fetch(`http://127.0.0.1:5000/movie/surprise`, {
+    const response = await fetch(`${API_BASE_URL}/movie/surprise`, {
       method: "GET",
       headers: {
         "Authorization": `Bearer ${token}`
       }
     });
     if (!response.ok) throw new Error("Failed to fetch surprise");
-    return await response.json(); // Yeh { movie_id: 1000xxx } dega
+    return await response.json();
   } catch (error) {
     console.error("API Error in getSurpriseMovie:", error);
     return null;
   }
 };
-

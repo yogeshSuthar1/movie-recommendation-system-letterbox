@@ -98,8 +98,8 @@
 }
 
 .s-tab.active {
-  color: #9b5cff;
-  border-bottom-color: #9b5cff;
+  color: var(--primary-accent);
+  border-bottom-color: var(--primary-accent);
 }
 
 /* ============================
@@ -242,7 +242,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #9b5cff;
+  color: var(--primary-accent);
   font-weight: 800;
   font-size: 30px;
   margin-bottom: 10px;
@@ -282,7 +282,7 @@
 
 .sm-tab-btn.active {
   color: #fff;
-  border-color: #9b5cff;
+  border-color: var(--primary-accent);
 }
 
 .sm-user-item {
@@ -304,7 +304,7 @@
 .sm-user-avatar {
   width: 38px;
   height: 38px;
-  background: linear-gradient(135deg, #3a1a6e, #9b5cff);
+  background: linear-gradient(135deg, #3a1a6e, var(--primary-accent));
   border-radius: 50%;
   display: flex;
   align-items: center;
@@ -314,7 +314,7 @@
 }
 
 .btn-follow-action {
-  background: #9b5cff;
+  background: var(--primary-accent);
   color: #fff;
   border: none;
   padding: 6px 16px;

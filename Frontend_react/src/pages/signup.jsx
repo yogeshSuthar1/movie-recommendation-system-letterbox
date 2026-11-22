@@ -1,5 +1,7 @@
+// File Path: Frontend_react/src/pages/signup.jsx
 import React, { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import { API_BASE_URL } from "../config/api";
 import PosterAnimation from "../components/PosterAnimation";
 import "../styles/signup.css";
 
@@ -10,39 +12,32 @@ export default function Signup() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
-
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
-
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
 
-  // 🔥 NAYA: OTP ke liye states
   const [isOtpSent, setIsOtpSent] = useState(false);
   const [otp, setOtp] = useState("");
 
   const handleSignup = async (e) => {
     e.preventDefault();
-    setError("");
-    setSuccess("");
+    setError(""); setSuccess("");
 
     if (!username || !email || !password || !confirmPassword) {
-      setError("Please fill in all fields");
-      return;
+      setError("Please fill in all fields"); return;
     }
     if (password !== confirmPassword) {
-      setError("Passwords do not match");
-      return;
+      setError("Passwords do not match"); return;
     }
     if (password.length < 6) {
-      setError("Password must be at least 6 characters");
-      return;
+      setError("Password must be at least 6 characters"); return;
     }
 
     setLoading(true);
     try {
-      const response = await fetch("http://127.0.0.1:5000/register", {
+      const response = await fetch(`${API_BASE_URL}/register`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username, email, password })
@@ -55,36 +50,26 @@ export default function Signup() {
         setLoading(false);
         return;
       }
-
-      console.log("Registration successful:", data);
       
-      // 🔥 NAYA: Redirect karne ki jagah OTP screen dikhao
       setSuccess("Account created! Please check your email for the OTP.");
       setIsOtpSent(true); 
-      setLoading(false);
-
     } catch (error) {
-      console.error("Signup error:", error);
-      setError("Unable to connect to server. Make sure Flask is running.");
+      setError("Unable to connect to server.");
+    } finally {
       setLoading(false);
     }
   };
 
-  // 🔥 NAYA: OTP Verify karne ka function
   const handleVerifyOtp = async (e) => {
     e.preventDefault();
-    setError("");
-    setSuccess("");
-    setLoading(true);
+    setError(""); setSuccess(""); setLoading(true);
 
     if (!otp) {
-      setError("Please enter the 6-digit OTP");
-      setLoading(false);
-      return;
+      setError("Please enter the 6-digit OTP"); setLoading(false); return;
     }
 
     try {
-      const response = await fetch("http://127.0.0.1:5000/verify-otp", {
+      const response = await fetch(`${API_BASE_URL}/verify-otp`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email: email, otp: otp })
@@ -99,14 +84,27 @@ export default function Signup() {
       }
 
       setSuccess("Email verified successfully! Redirecting to login...");
-      
-      setTimeout(() => {
-        navigate("/login");
-      }, 2000);
-
+      setTimeout(() => navigate("/login"), 1500);
     } catch (error) {
       setError("Unable to connect to server.");
       setLoading(false);
+    }
+  };
+
+  const handleResendOtp = async () => {
+    setError(""); setSuccess("Sending new OTP...");
+    try {
+      const res = await fetch(`${API_BASE_URL}/resend-otp`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      setSuccess("New OTP sent!");
+    } catch (e) {
+      setError(e.message || "Failed to resend");
+      setSuccess("");
     }
   };
 
@@ -120,15 +118,11 @@ export default function Signup() {
         <div className="signup-card">
           <h1>{isOtpSent ? "Verify Email" : "Create Account"}</h1>
           <p className="signup-subtitle">
-            {isOtpSent 
-              ? "We've sent a 6-digit code to your email." 
-              : "Join MovieVerse and discover movies you'll love."}
+            {isOtpSent ? "We've sent a 6-digit code to your email." : "Join MovieVerse and discover movies you'll love."}
           </p>
 
-          {/* 🔥 NAYA: Agar OTP nahi bheja hai toh Signup form, warna OTP form */}
           {!isOtpSent ? (
             <form onSubmit={handleSignup}>
-              {/* USERNAME */}
               <div className="signup-input-group">
                 <label>Username</label>
                 <div className="signup-input-wrapper">
@@ -137,7 +131,6 @@ export default function Signup() {
                 </div>
               </div>
 
-              {/* EMAIL */}
               <div className="signup-input-group">
                 <label>Email</label>
                 <div className="signup-input-wrapper">
@@ -146,7 +139,6 @@ export default function Signup() {
                 </div>
               </div>
 
-              {/* PASSWORD */}
               <div className="signup-input-group">
                 <label>Password</label>
                 <div className="signup-input-wrapper">
@@ -158,7 +150,6 @@ export default function Signup() {
                 </div>
               </div>
 
-              {/* CONFIRM PASSWORD */}
               <div className="signup-input-group">
                 <label>Confirm Password</label>
                 <div className="signup-input-wrapper">
@@ -178,19 +169,12 @@ export default function Signup() {
               </button>
             </form>
           ) : (
-            /* 🔥 NAYA: OTP VERIFICATION FORM */
             <form onSubmit={handleVerifyOtp}>
               <div className="signup-input-group">
                 <label>Enter 6-Digit OTP</label>
                 <div className="signup-input-wrapper">
                   <span className="signup-input-icon">🔑</span>
-                  <input 
-                    type="text" 
-                    placeholder="e.g. 123456" 
-                    value={otp} 
-                    onChange={(e) => setOtp(e.target.value)} 
-                    maxLength="6"
-                  />
+                  <input type="text" placeholder="e.g. 123456" value={otp} onChange={(e) => setOtp(e.target.value)} maxLength="6" />
                 </div>
               </div>
 
@@ -200,6 +184,16 @@ export default function Signup() {
               <button type="submit" className="signup-button" disabled={loading}>
                 {loading ? "Verifying..." : "Verify & Login"}
               </button>
+              
+              <div style={{ textAlign: "center", marginTop: "15px" }}>
+                <button
+                  type="button"
+                  onClick={handleResendOtp}
+                  style={{ background: "none", border: "none", fontSize: "12px", color: "#888", cursor: "pointer", textDecoration: "underline" }}
+                >
+                  Resend OTP
+                </button>
+              </div>
             </form>
           )}
 

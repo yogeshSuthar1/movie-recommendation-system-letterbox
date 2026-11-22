@@ -172,7 +172,7 @@
   display: inline-block;
   margin-top: 20px;
   padding: 12px 30px;
-  background: #9b5cff;
+  background: var(--primary-accent);
   color: #fff;
   text-decoration: none;
   border-radius: 25px;

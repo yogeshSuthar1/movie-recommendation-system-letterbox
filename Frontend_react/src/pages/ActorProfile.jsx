@@ -67,7 +67,7 @@ export default function Actor() {
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: "30px", borderBottom: "1px solid #333", paddingBottom: "20px" }}>
           <div style={{ display: "flex", alignItems: "center", gap: "20px" }}>
             <div style={{ 
-              width: "80px", height: "80px", borderRadius: "50%", background: "#9b5cff", 
+              width: "80px", height: "80px", borderRadius: "50%", background: "var(--primary-accent)", 
               display: "flex", alignItems: "center", justifyContent: "center", fontSize: "32px", fontWeight: "bold" 
             }}>
               {name ? name.charAt(0).toUpperCase() : "?"}
@@ -124,7 +124,7 @@ export default function Actor() {
         </div>
 
         {loading && (
-          <div style={{ textAlign: "center", padding: "30px", color: "#9b5cff", fontSize: "16px", fontWeight: "bold" }}>
+          <div style={{ textAlign: "center", padding: "30px", color: "var(--primary-accent)", fontSize: "16px", fontWeight: "bold" }}>
             ⏳ Loading more movies...
           </div>
         )}

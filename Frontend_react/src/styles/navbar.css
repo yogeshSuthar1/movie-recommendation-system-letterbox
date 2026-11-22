@@ -1,9 +1,6 @@
-/* 🔥 GOOGLE FONTS FOR NEXUS (Cinzel & Montserrat) */
 @import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@700&family=Montserrat:wght@300;400&display=swap');
 
-/* =========================================
-   GLOBAL NAVBAR & HEADER
-========================================= */
+/* GLOBAL NAVBAR & HEADER */
 .navbar {
   display: flex;
   justify-content: space-between;
@@ -14,13 +11,10 @@
   position: sticky;
   top: 0;
   width: 100%;
-  z-index: 2147483647 !important; /* Max possible z-index */
+  z-index: 2147483647 !important;
   pointer-events: auto !important;
 }
 
-/* =========================================
-   🚀 NEXUS LOGO STYLING
-========================================= */
 .navbar-logo-container {
   display: flex;
   align-items: center;
@@ -28,13 +22,13 @@
 }
 
 .nexus-logo {
-  font-family: 'Cinzel', serif; /* Classy Cinematic Font */
+  font-family: 'Cinzel', serif;
   font-size: 2.2rem;
   font-weight: 700;
-  color: #ffffff; /* White color for premium look */
+  color: #ffffff;
   text-decoration: none;
-  letter-spacing: 6px; /* Text ke beech gap premium lagta hai */
-  text-shadow: 0px 0px 10px rgba(255, 255, 255, 0.3); /* Halka sa glow */
+  letter-spacing: 6px;
+  text-shadow: 0px 0px 10px rgba(255, 255, 255, 0.3);
 }
 
 .nexus-tagline {
@@ -47,9 +41,16 @@
   text-transform: uppercase;
 }
 
-/* =========================================
-   🚀 BUTTERY SMOOTH HOVER ANIMATION
-========================================= */
+/* MOBILE TOGGLE BUTTON (HIDDEN ON DESKTOP) */
+.mobile-menu-btn {
+  display: none;
+  background: transparent;
+  border: none;
+  color: #fff;
+  cursor: pointer;
+  padding: 5px;
+}
+
 .header-actions {
   display: flex;
   align-items: center;
@@ -93,9 +94,6 @@
   opacity: 1;
 }
 
-/* =========================================
-   NOTIFICATIONS & DROPDOWNS
-========================================= */
 .notif-dot {
   position: absolute;
   top: 6px;
@@ -125,7 +123,7 @@
   width: 24px;
   height: 24px;
   border-radius: 50%;
-  background: linear-gradient(135deg, #9b5cff, #47b8ff);
+  background: linear-gradient(135deg, var(--primary-accent), #47b8ff);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -135,9 +133,6 @@
   flex-shrink: 0;
 }
 
-/* =========================================
-   👤 PROFILE DROPDOWN FIX
-========================================= */
 .dropdown-divider {
   height: 1px;
   background: rgba(255, 255, 255, 0.08);
@@ -174,17 +169,6 @@
   color: #ff4757;
 }
 
-/* =========================================
-   ✨ GLASSMORPHISM & CUSTOM SCROLLBAR
-========================================= */
-.glass-panel {
-  background: rgba(15, 15, 20, 0.65) !important;
-  backdrop-filter: blur(24px) !important;
-  -webkit-backdrop-filter: blur(24px) !important;
-  border: 1px solid rgba(255, 255, 255, 0.08) !important;
-  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.8) !important;
-}
-
 .custom-dropdown::-webkit-scrollbar {
   width: 5px;
 }
@@ -198,4 +182,69 @@
 }
 .custom-dropdown::-webkit-scrollbar-thumb:hover {
   background: rgba(155, 92, 255, 0.5); 
+}
+
+/* MOBILE FIXES */
+@media (max-width: 900px) {
+  .navbar {
+    padding: 12px 20px !important;
+  }
+  
+  .nexus-tagline {
+    display: none; 
+  }
+  
+  .nexus-logo {
+    font-size: 1.6rem;
+    letter-spacing: 3px;
+  }
+
+  .mobile-menu-btn {
+    display: block;
+    margin-left: auto;
+  }
+
+  /* Default hidden, absolute positioning relative to nearest container */
+  .header-actions {
+    display: none; 
+    position: absolute;
+    top: 65px;
+    right: 20px;
+    background: rgba(15, 15, 20, 0.98);
+    backdrop-filter: blur(15px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 12px;
+    padding: 20px;
+    flex-direction: column;
+    gap: 15px !important;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.9);
+    width: 220px;
+    z-index: 1000;
+  }
+
+  /* Toggle class to show */
+  .header-actions.mobile-open {
+    display: flex;
+  }
+
+  .nav-item {
+    gap: 12px;
+    width: 100%;
+    justify-content: flex-start; 
+  }
+  
+  .nav-text {
+    opacity: 1;
+    max-width: none;
+    font-size: 15px;
+  }
+
+  .custom-dropdown {
+    position: static; 
+    width: 100% !important;
+    box-shadow: none;
+    border: none;
+    background: rgba(0,0,0,0.3);
+    margin-top: 10px;
+  }
 }

@@ -12,8 +12,10 @@ collections_bp = Blueprint("collections", __name__)
 def create_collection():
     user_id = g.user_id
     data = request.get_json() or {}
-    title = data.get("title", "").strip()
-    description = data.get("description", "").strip()
+    
+    # 🚀 FIX: Prevent crash if title/description is None
+    title = (data.get("title") or "").strip()
+    description = (data.get("description") or "").strip()
 
     if not title:
         return jsonify({"error": "Collection title is required"}), 400
@@ -61,7 +63,6 @@ def add_movie_to_collection(collection_id):
         return jsonify({"error": "Movie ID is required"}), 400
 
     with engine.begin() as conn:
-        # 🚀 SECURITY FIX: Check ki yeh collection logged-in user ki hi hai
         col_owner = conn.execute(
             text("SELECT user_id FROM collections WHERE collection_id = :cid"),
             {"cid": collection_id}
@@ -73,7 +74,6 @@ def add_movie_to_collection(collection_id):
         if int(col_owner[0]) != int(user_id):
             return jsonify({"error": "Unauthorized: You can only edit your own collections"}), 403
 
-        # Check agar movie pehle se us collection mein hai
         exists = conn.execute(
             text("SELECT id FROM collection_movies WHERE collection_id = :cid AND movie_id = :mid"),
             {"cid": collection_id, "mid": movie_id}

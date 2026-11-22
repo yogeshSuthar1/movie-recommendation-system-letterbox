@@ -1,6 +1,7 @@
+# File Path: backend/routes/watchlist.py
 from flask import Blueprint, jsonify, g
 from sqlalchemy import text
-
+from sqlalchemy.exc import IntegrityError
 from backend.database import engine
 from backend.middleware.auth_middleware import token_required
 
@@ -48,11 +49,14 @@ def add_to_watchlist(movie_id):
                 }
             )
 
-    except Exception:
-
+    except IntegrityError:
+        # 🚀 FIX: Catch specific DB exception instead of bare 'except'
         return jsonify({
             "error": "Movie already exists in your watchlist"
         }), 409
+    except Exception as e:
+        print("Watchlist Insert Error:", e)
+        return jsonify({"error": "Failed to add movie to watchlist"}), 500
 
     return jsonify({
         "message": "Movie added to watchlist",
@@ -89,7 +93,6 @@ def get_watchlist():
             {"user_id": user_id}
         ).mappings().all()
 
-    # Convert SQLAlchemy RowMapping to normal dictionaries
     watchlist = [dict(movie) for movie in movies]
 
     return jsonify({

@@ -1,3 +1,4 @@
+# File Path: backend/routes/profile.py
 from flask import Blueprint, jsonify, request, g
 from sqlalchemy import text
 from datetime import datetime
@@ -33,20 +34,23 @@ def get_profile():
 
     return jsonify(dict(user)), 200
 
+# 🚀 N6 FIX: Backend Avatar Validation
 @profile_bp.route("/user/edit", methods=["POST"])
+@token_required
 def edit_profile():
-    data = request.get_json()
-    user_id = data.get("user_id")
+    user_id = g.user_id
+    data = request.get_json() or {}
     new_username = data.get("username")
     new_bio = data.get("bio")
-
-    if not user_id:
-        return jsonify({"error": "User ID is required"}), 400
+    new_avatar = data.get("profile_image")
 
     try:
         with engine.begin() as conn:
             if new_username:
                 new_username = new_username.strip()
+                if not new_username:
+                    return jsonify({"error": "Username cannot be empty"}), 400
+
                 existing = conn.execute(
                     text("SELECT user_id FROM users WHERE username = :uname AND user_id != :uid"),
                     {"uname": new_username, "uid": user_id}
@@ -65,11 +69,29 @@ def edit_profile():
                     text("UPDATE users SET bio = :bio WHERE user_id = :uid"),
                     {"bio": new_bio.strip(), "uid": user_id}
                 )
+            
+            if new_avatar is not None:
+                clean_avatar = new_avatar.strip()
+                # 🚀 URL Validation: Must start with http or https, else save as None
+                if clean_avatar and not (clean_avatar.startswith("http://") or clean_avatar.startswith("https://")):
+                    clean_avatar = None
+                elif not clean_avatar:
+                    clean_avatar = None
 
-        return jsonify({"message": "Profile updated successfully"}), 200
+                conn.execute(
+                    text("UPDATE users SET profile_image = :avatar WHERE user_id = :uid"),
+                    {"avatar": clean_avatar, "uid": user_id}
+                )
+
+        return jsonify({
+            "message": "Profile updated successfully",
+            "username": new_username,
+            "bio": new_bio,
+            "profile_image": new_avatar
+        }), 200
     except Exception as e:
         print("EDIT PROFILE ERROR:", str(e))
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": "Failed to update profile"}), 500
 
 @profile_bp.route("/profile/<int:user_id>/analytics", methods=["GET"])
 def get_user_analytics(user_id):
@@ -108,10 +130,10 @@ def get_user_analytics(user_id):
 
     total_minutes = sum([row['runtime_minutes'] or 0 for row in result])
     total_hours = total_minutes // 60
-    avg_rating = round(sum([row['rating'] for row in result]) / len(result), 1) if result else 0
+    avg_rating = round(sum([row['rating'] or 0 for row in result]) / len(result), 1) if result else 0
 
     current_year = datetime.now().year
-    movies_this_year = len([row for row in result if row['created_at'].year == current_year])
+    movies_this_year = len([row for row in result if row['created_at'] and row['created_at'].year == current_year])
 
     all_genres = []
     for row in result:
@@ -123,7 +145,7 @@ def get_user_analytics(user_id):
     top_genres = [{"name": g[0], "value": g[1]} for g in top_genres_count]
 
     month_names = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
-    monthly_counts = Counter([row['created_at'].month for row in result])
+    monthly_counts = Counter([row['created_at'].month for row in result if row['created_at']])
     
     monthly_activity = []
     for month_num in range(1, 13): 
@@ -140,6 +162,7 @@ def get_user_analytics(user_id):
         "top_genres": top_genres,
         "monthly_activity": monthly_activity[-6:] 
     }), 200
+
 
 social_bp = Blueprint("social", __name__)
 
@@ -162,36 +185,7 @@ def search_users():
 
     return jsonify([dict(u) for u in users]), 200
 
-@social_bp.route("/user/<int:target_user_id>/follow", methods=["POST"])
-@token_required
-def follow_user(target_user_id):
-    data = request.get_json()
-    current_user_id = data.get("current_user_id")
-
-    if not current_user_id:
-        return jsonify({"error": "User ID missing"}), 400
-
-    if int(current_user_id) == int(target_user_id):
-        return jsonify({"error": "You cannot follow yourself"}), 400
-
-    with engine.begin() as conn:
-        existing = conn.execute(
-            text("SELECT * FROM followers WHERE follower_id = :cid AND following_id = :tid"),
-            {"cid": int(current_user_id), "tid": target_user_id}
-        ).fetchone()
-
-        if existing:
-            conn.execute(
-                text("DELETE FROM followers WHERE follower_id = :cid AND following_id = :tid"),
-                {"cid": int(current_user_id), "tid": target_user_id}
-            )
-            return jsonify({"status": "unfollowed", "message": "Successfully unfollowed user"}), 200
-        else:
-            conn.execute(
-                text("INSERT INTO followers (follower_id, following_id) VALUES (:cid, :tid)"),
-                {"cid": int(current_user_id), "tid": target_user_id}
-            )
-            return jsonify({"status": "followed", "message": "Successfully followed user"}), 200
+# 🚀 N7 FIX: Puraana 'social_bp' wala "/users/<id>/follow" route ab delete kar diya gaya hai kyunki 'auth_bp' mein updated rate-limited route mojood hai.
 
 @social_bp.route("/user/<int:user_id>/stats", methods=["GET"])
 def get_user_follow_stats(user_id):
@@ -215,7 +209,7 @@ def get_user_follow_stats(user_id):
 def get_followers_list(user_id):
     with engine.connect() as conn:
         query = text("""
-            SELECT u.user_id, u.username 
+            SELECT u.user_id, u.username, u.profile_image 
             FROM followers f
             JOIN users u ON f.follower_id = u.user_id
             WHERE f.following_id = :uid
@@ -227,13 +221,14 @@ def get_followers_list(user_id):
 def get_following_list(user_id):
     with engine.connect() as conn:
         query = text("""
-            SELECT u.user_id, u.username 
+            SELECT u.user_id, u.username, u.profile_image 
             FROM followers f
             JOIN users u ON f.following_id = u.user_id
             WHERE f.follower_id = :uid
         """)
         results = [dict(row) for row in conn.execute(query, {"uid": user_id}).mappings().all()]
     return jsonify(results), 200
+
 
 @profile_bp.route("/user/<int:user_id>/reviews", methods=["GET"])
 def get_user_reviews(user_id):
@@ -244,6 +239,7 @@ def get_user_reviews(user_id):
                 r.movie_id, 
                 r.review_text, 
                 r.rating, 
+                r.is_spoiler,
                 r.likes, 
                 r.created_at,
                 m.title as movie_title, 

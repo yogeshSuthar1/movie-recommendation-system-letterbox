@@ -256,7 +256,7 @@
   background: linear-gradient(
     135deg,
     #7c3aed,
-    #9b5cff
+    var(--primary-accent)
   );
 
   color: white;

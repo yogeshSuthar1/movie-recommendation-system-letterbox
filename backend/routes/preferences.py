@@ -1,3 +1,4 @@
+# File Path: backend/routes/preferences.py
 from flask import Blueprint, request, jsonify, g
 from backend.database import engine
 from sqlalchemy import text
@@ -10,16 +11,17 @@ preferences_bp = Blueprint("preferences", __name__)
 def save_preferences():
     user_id = g.user_id
     data = request.get_json()
-    genres = data.get("genres", [])
 
-    print(f"👉 SAVING PREFERENCES -> User ID: {user_id}, Genres: {genres}") # 👈 Yeh add karo
-
+    # 🚀 FIX: Pehle data validate karo, fir print aur extract karo
     if not data:
         return jsonify({
             "error": "Request body is required"
         }), 400
-
-    # genres = data.get("genres")
+        
+    genres = data.get("genres", [])
+    
+    # Optional debugging statement, keeping it minimal without full user data dump
+    print(f"👉 SAVING PREFERENCES -> User ID: {user_id}") 
 
     if not genres or not isinstance(genres, list):
         return jsonify({
@@ -46,7 +48,6 @@ def save_preferences():
     favorite_genre = ", ".join(cleaned_genres)
 
     try:
-        # Check if preferences already exist for this user
         with engine.connect() as conn:
             existing = conn.execute(
                 text("""
@@ -57,7 +58,6 @@ def save_preferences():
                 {"user_id": user_id}
             ).first()
 
-        # Update or Insert preferences inside a transaction block
         with engine.begin() as conn:
             if existing:
                 conn.execute(

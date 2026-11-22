@@ -1,5 +1,7 @@
+// File Path: Frontend_react/src/pages/login.jsx
 import React, { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import { API_BASE_URL } from "../config/api";
 import PosterAnimation from "../components/PosterAnimation";
 import "../styles/login.css";
 
@@ -8,15 +10,13 @@ export default function Login() {
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [successMsg, setSuccessMsg] = useState(""); // 🌟 NAYA: Login success msg ke liye
+  const [successMsg, setSuccessMsg] = useState("");
 
-  // 🔥 NAYA: Forgot Password States
   const [showForgotModal, setShowForgotModal] = useState(false);
-  const [forgotStep, setForgotStep] = useState(1); // 1 = Email, 2 = OTP + New Password
+  const [forgotStep, setForgotStep] = useState(1);
   const [forgotEmail, setForgotEmail] = useState("");
   const [forgotOtp, setForgotOtp] = useState("");
   const [newPassword, setNewPassword] = useState("");
@@ -36,7 +36,7 @@ export default function Login() {
 
     setLoading(true);
     try {
-      const response = await fetch("http://127.0.0.1:5000/login", {
+      const response = await fetch(`${API_BASE_URL}/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, password })
@@ -45,7 +45,6 @@ export default function Login() {
       const data = await response.json();
 
       if (!response.ok) {
-        // 🔥 Agar is_verified false hai toh backend 403 bhejega jo yahan error mein aayega
         setError(data.error || "Login failed");
         setLoading(false);
         return;
@@ -54,27 +53,29 @@ export default function Login() {
       localStorage.setItem("token", data.token);
       localStorage.setItem("user_id", data.user.user_id);
       localStorage.setItem("username", data.user.username);
-      localStorage.setItem("user", JSON.stringify(data.user));
+      if (data.user.profile_image) {
+        localStorage.setItem("profile_image", data.user.profile_image);
+      } else {
+        localStorage.removeItem("profile_image");
+      }
 
       if (data.has_genres) {
         navigate("/home"); 
       } else {
         navigate("/genres"); 
       }
-
     } catch (error) {
-      setError("Unable to connect to server. Make sure Flask is running.");
+      setError("Unable to connect to server. Is Backend running?");
     } finally {
       setLoading(false);
     }
   };
 
-  // 🔥 NAYA: Step 1 - Send OTP for Forgot Password
   const handleForgotPassword = async (e) => {
     e.preventDefault();
     setForgotError(""); setForgotSuccess(""); setForgotLoading(true);
     try {
-      const res = await fetch("http://127.0.0.1:5000/forgot-password", {
+      const res = await fetch(`${API_BASE_URL}/forgot-password`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email: forgotEmail })
@@ -85,7 +86,7 @@ export default function Login() {
         return;
       }
       setForgotSuccess("OTP sent to your email!");
-      setForgotStep(2); // Move to Step 2 (Enter OTP)
+      setForgotStep(2);
     } catch (err) {
       setForgotError("Server connection error.");
     } finally {
@@ -93,12 +94,11 @@ export default function Login() {
     }
   };
 
-  // 🔥 NAYA: Step 2 - Verify OTP and Reset Password
   const handleResetPassword = async (e) => {
     e.preventDefault();
     setForgotError(""); setForgotSuccess(""); setForgotLoading(true);
     try {
-      const res = await fetch("http://127.0.0.1:5000/reset-password-otp", {
+      const res = await fetch(`${API_BASE_URL}/reset-password-otp`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email: forgotEmail, otp: forgotOtp, new_password: newPassword })
@@ -108,11 +108,10 @@ export default function Login() {
         setForgotError(data.error || "Invalid OTP or request.");
         return;
       }
-      // Reset successful! Close modal and show success on login screen
       setShowForgotModal(false);
       setForgotStep(1);
       setForgotEmail(""); setForgotOtp(""); setNewPassword("");
-      setSuccessMsg("Password reset successfully! Please log in with your new password.");
+      setSuccessMsg("Password reset successfully! Please log in.");
     } catch (err) {
       setForgotError("Server connection error.");
     } finally {
@@ -143,9 +142,8 @@ export default function Login() {
             <div className="input-group">
               <div style={{ display: "flex", justifyContent: "space-between" }}>
                 <label>Password</label>
-                {/* 🔥 NAYA: Forgot Password Link */}
                 <span 
-                  style={{ fontSize: "12px", color: "#9b5cff", cursor: "pointer", fontWeight: "600" }} 
+                  style={{ fontSize: "12px", color: "var(--primary-accent)", cursor: "pointer", fontWeight: "600" }} 
                   onClick={() => setShowForgotModal(true)}
                 >
                   Forgot password?
@@ -175,7 +173,6 @@ export default function Login() {
         </div>
       </div>
 
-      {/* 🔥 NAYA: FORGOT PASSWORD MODAL */}
       {showForgotModal && (
         <div className="modal-overlay" style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, backgroundColor: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 }}>
           <div className="modal-content" style={{ background: "#0f0f13", padding: "30px", borderRadius: "12px", width: "90%", maxWidth: "400px", border: "1px solid rgba(155,92,255,0.3)" }}>

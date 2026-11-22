@@ -1,3 +1,16 @@
+/* File Path: Frontend_react/src/styles/global.css */
+:root {
+    --bg-main: #07070a;
+    --bg-secondary: #12121c;
+    --primary-accent: #9b5cff;
+    --primary-accent-hover: #7a3edb;
+    --secondary-accent: #a78bfa;
+    --blue-accent: #47b8ff;
+    --text-main: #ffffff;
+    --text-muted: #888888;
+    --border-light: rgba(255, 255, 255, 0.08);
+}
+
 * {
     margin: 0;
     padding: 0;
@@ -13,10 +26,14 @@ body,
 
 body {
     margin: 0;
-    background: #07070a;
-    color: white;
-    font-family: Inter, Arial, sans-serif;
-
+    background: var(--bg-main);
+    color: var(--text-main);
+    font-family: 'Inter', Arial, sans-serif;
     overflow-x: hidden;
     overflow-y: auto;
+}
+
+*:focus-visible {
+    outline: 2px solid var(--primary-accent);
+    outline-offset: 2px;
 }

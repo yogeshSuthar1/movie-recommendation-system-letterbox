@@ -53,7 +53,7 @@
 
 .filter-header h3 span {
   font-size: 10px;
-  background: #9b5cff;
+  background: var(--primary-accent);
   color: #fff;
   padding: 2px 6px;
   border-radius: 10px;
@@ -122,7 +122,7 @@
 }
 .filter-select:focus {
   outline: none;
-  border-color: #9b5cff;
+  border-color: var(--primary-accent);
 }
 
 /* Badges (Genre) */
@@ -153,7 +153,7 @@
 
 .filter-badge.active {
   background: rgba(155, 92, 255, 0.1);
-  border-color: #9b5cff;
+  border-color: var(--primary-accent);
   color: #fff;
   box-shadow: 0 0 15px rgba(155, 92, 255, 0.15);
 }
@@ -161,9 +161,9 @@
 .active-dot {
   width: 6px;
   height: 6px;
-  background: #9b5cff;
+  background: var(--primary-accent);
   border-radius: 50%;
-  box-shadow: 0 0 8px #9b5cff;
+  box-shadow: 0 0 8px var(--primary-accent);
 }
 
 /* Duration Pills */
@@ -328,13 +328,13 @@
   flex-direction: column;
   align-items: center;
   padding: 40px;
-  color: #9b5cff;
+  color: var(--primary-accent);
   font-size: 14px;
 }
 .spinner {
   width: 30px; height: 30px;
   border: 3px solid rgba(155, 92, 255, 0.2);
-  border-top-color: #9b5cff;
+  border-top-color: var(--primary-accent);
   border-radius: 50%;
   animation: spin 1s infinite linear;
   margin-bottom: 10px;
@@ -362,7 +362,7 @@
 .btn-surprise-me-simple {
   width: 100%;
   background-color: rgba(155, 92, 255, 0.1); /* Halka transparent purple */
-  color: #9b5cff; /* Tera theme wala original purple */
+  color: var(--primary-accent); /* Tera theme wala original purple */
   border: 1px solid rgba(155, 92, 255, 0.4);
   padding: 12px 0; /* Height ekdum normal kar di */
   border-radius: 8px; /* Clean edges */
@@ -374,7 +374,7 @@
 }
 
 .btn-surprise-me-simple:hover {
-  background-color: #9b5cff; /* Hover karne par poora purple ban jayega */
+  background-color: var(--primary-accent); /* Hover karne par poora purple ban jayega */
   color: #fff;
   box-shadow: 0 4px 15px rgba(155, 92, 255, 0.3); /* Halka sa glow */
 }
@@ -427,7 +427,7 @@
 }
 
 .btn-view-surprise {
-  background: #9b5cff;
+  background: var(--primary-accent);
   color: #fff;
   text-decoration: none;
   padding: 6px 10px;
