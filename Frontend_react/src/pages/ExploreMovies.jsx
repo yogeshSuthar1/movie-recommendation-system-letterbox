@@ -1,7 +1,7 @@
 // File Path: Frontend_react/src/pages/ExploreMovies.jsx
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { Link, useLocation, useSearchParams } from "react-router-dom";
-import { API_BASE_URL } from "../config/api"; // 🚀 FIX N4
+import { API_BASE_URL } from "../config/api";
 import Navbar from "../components/Navbar";
 import SearchModal from "../components/SearchModal";
 import { getSurpriseMovie } from "../services/homeService";
@@ -44,7 +44,6 @@ export default function ExploreMovies() {
   const fetchMovies = async (pageNum) => {
     setLoading(true);
     try {
-      // 🚀 FIX N4
       const url = `${API_BASE_URL}/explore/movies?page=${pageNum}&limit=20&genre=${encodeURIComponent(
         selectedGenre
       )}&sort_by=${encodeURIComponent(sortBy)}&lang=${encodeURIComponent(
@@ -123,7 +122,27 @@ export default function ExploreMovies() {
         <aside className="explore-sidebar">
           <div className="filter-header">
             <h3>Filters <span>{movies.length > 0 ? "Active" : ""}</span></h3>
-            <button onClick={clearFilters} className="clear-btn">✕ Clear</button>
+            <button
+              onClick={clearFilters}
+              className="clear-btn"
+              style={{ display: "inline-flex", alignItems: "center", gap: "5px" }}
+            >
+              <svg
+                width="13"
+                height="13"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.3"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <line x1="18" y1="6" x2="6" y2="18" />
+                <line x1="6" y1="6" x2="18" y2="18" />
+              </svg>
+              <span>Clear</span>
+            </button>
           </div>
 
           <div className="filter-scroll-area">
@@ -239,10 +258,34 @@ export default function ExploreMovies() {
                     <div className="card-img-wrapper">
                       <img src={movie.poster_url} alt={movie.title} loading="lazy" />
                       <div className="card-overlay">
-                        <span className="play-btn">▶</span>
+                        <span className="play-btn" style={{ display: "inline-flex", alignItems: "center", justifyContent: "center" }}>
+                          <svg
+                            width="16"
+                            height="16"
+                            viewBox="0 0 24 24"
+                            fill="currentColor"
+                            aria-hidden="true"
+                          >
+                            <polygon points="6 3 20 12 6 21 6 3" />
+                          </svg>
+                        </span>
                       </div>
                       {movie.avg_rating && (
-                        <div className="rating-badge">★ {Number(movie.avg_rating).toFixed(1)}</div>
+                        <div
+                          className="rating-badge"
+                          style={{ display: "inline-flex", alignItems: "center", gap: "4px" }}
+                        >
+                          <svg
+                            width="12"
+                            height="12"
+                            viewBox="0 0 24 24"
+                            fill="currentColor"
+                            aria-hidden="true"
+                          >
+                            <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+                          </svg>
+                          <span>{Number(movie.avg_rating).toFixed(1)}</span>
+                        </div>
                       )}
                     </div>
                     <div className="card-info">
@@ -263,7 +306,7 @@ export default function ExploreMovies() {
           )}
 
           {!hasMore && movies.length > 0 && (
-            <div className="end-msg">🎉 You've explored all movies in this category!</div>
+            <div className="end-msg">You've explored all movies in this category!</div>
           )}
           {!loading && movies.length === 0 && (
             <div className="empty-state">No movies found for these filters.</div>

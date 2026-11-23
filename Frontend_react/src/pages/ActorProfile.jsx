@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from "react";
 import { useParams, Link } from "react-router-dom";
 import { getActorMovies } from "../services/homeService";
 import Navbar from "../components/Navbar";
-import SearchModal from "../components/SearchModal"; // 👈 Import added
+import SearchModal from "../components/SearchModal";
 
 export default function Actor() {
   const params = useParams();
@@ -12,8 +12,6 @@ export default function Actor() {
   const [sortBy, setSortBy] = useState("year");
   const [loading, setLoading] = useState(false);
   const [hasMore, setHasMore] = useState(true);
-  
-  // 🌟 Search Modal State Added
   const [isSearchOpen, setIsSearchOpen] = useState(false);
 
   const observer = useRef();
@@ -58,7 +56,6 @@ export default function Actor() {
 
   return (
     <div style={{ minHeight: "100vh", background: "#0a0a0f", color: "#fff", paddingBottom: "50px" }}>
-      {/* 🌟 Passed onOpenSearch prop */}
       <Navbar onOpenSearch={() => setIsSearchOpen(true)} />
       
       <div style={{ maxWidth: "1200px", margin: "40px auto", padding: "0 20px" }}>
@@ -115,7 +112,18 @@ export default function Actor() {
                   </h4>
                   <div style={{ display: "flex", justifyContent: "space-between", fontSize: "13px", color: "#aaa" }}>
                     <span>{movie.release_year || "N/A"}</span>
-                    <span style={{ color: "#f5c518" }}>⭐ {movie.avg_rating > 0 ? movie.avg_rating : "N/A"}</span>
+                    <span style={{ color: "#f5c518", display: "inline-flex", alignItems: "center", gap: "4px" }}>
+                      <svg
+                        width="13"
+                        height="13"
+                        viewBox="0 0 24 24"
+                        fill="currentColor"
+                        aria-hidden="true"
+                      >
+                        <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+                      </svg>
+                      {movie.avg_rating > 0 ? movie.avg_rating : "N/A"}
+                    </span>
                   </div>
                 </div>
               </Link>
@@ -124,8 +132,20 @@ export default function Actor() {
         </div>
 
         {loading && (
-          <div style={{ textAlign: "center", padding: "30px", color: "var(--primary-accent)", fontSize: "16px", fontWeight: "bold" }}>
-            ⏳ Loading more movies...
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "10px", padding: "30px", color: "var(--primary-accent)", fontSize: "16px", fontWeight: "bold" }}>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+              <path d="M21 12a9 9 0 1 1-6.219-8.56">
+                <animateTransform
+                  attributeName="transform"
+                  type="rotate"
+                  from="0 12 12"
+                  to="360 12 12"
+                  dur="0.8s"
+                  repeatCount="indefinite"
+                />
+              </path>
+            </svg>
+            <span>Loading more movies...</span>
           </div>
         )}
         
@@ -137,7 +157,6 @@ export default function Actor() {
 
       </div>
 
-      {/* 🌟 Search Modal Rendered at the Bottom */}
       <SearchModal isOpen={isSearchOpen} onClose={() => setIsSearchOpen(false)} />
     </div>
   );

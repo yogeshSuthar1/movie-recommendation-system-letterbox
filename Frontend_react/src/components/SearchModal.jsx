@@ -71,7 +71,7 @@ export default function SearchModal({ isOpen, onClose }) {
     if (success) setHistory([]);
   };
 
-  // 🚀 P1 FIX #15: Save search query only on Enter or clicking a result
+  // Save search query only on Enter or clicking a result
   const handleResultClick = (labelToSave) => {
     const queryToSave = (labelToSave || searchTerm || "").trim();
     if (queryToSave.length >= 2) {
@@ -179,8 +179,23 @@ export default function SearchModal({ isOpen, onClose }) {
                   key={item.history_id}
                   className="history-item"
                   onClick={() => setSearchTerm(item.search_query)}
+                  style={{ display: "flex", alignItems: "center", gap: "10px" }}
                 >
-                  🕒 {item.search_query}
+                  <svg
+                    width="15"
+                    height="15"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    style={{ opacity: 0.65, flexShrink: 0 }}
+                  >
+                    <circle cx="12" cy="12" r="10" />
+                    <polyline points="12 6 12 12 16 14" />
+                  </svg>
+                  <span>{item.search_query}</span>
                 </div>
               ))}
             </div>
@@ -206,7 +221,22 @@ export default function SearchModal({ isOpen, onClose }) {
                       </div>
                       <div className="src-info">
                         <h4>{item.title}</h4>
-                        <span>{item.release_year} • ⭐ {item.avg_rating || "N/A"}</span>
+                        <span style={{ display: "inline-flex", alignItems: "center", gap: "5px" }}>
+                          <span>{item.release_year}</span>
+                          <span>•</span>
+                          <span style={{ display: "inline-flex", alignItems: "center", gap: "3px" }}>
+                            <svg
+                              width="12"
+                              height="12"
+                              viewBox="0 0 24 24"
+                              fill="#f5c518"
+                              aria-hidden="true"
+                            >
+                              <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+                            </svg>
+                            {item.avg_rating || "N/A"}
+                          </span>
+                        </span>
                       </div>
                     </Link>
                   );

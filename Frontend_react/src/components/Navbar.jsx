@@ -263,7 +263,7 @@ export default function Navbar({ onOpenSearch }) {
           <span className="nav-text">Search</span>
         </button>
 
-        {/* 5. Notifications (Ab <button> hai, keyboard se khulega) */}
+        {/* 5. Notifications */}
         <div style={{ position: "relative" }} ref={notifDropdownRef}>
           <button
             type="button"
@@ -374,17 +374,30 @@ export default function Navbar({ onOpenSearch }) {
                               : notif.type === "comment"
                               ? "#3742fa"
                               : "#2ed573",
-                          width: "14px",
-                          height: "14px",
+                          color: "#fff",
+                          width: "15px",
+                          height: "15px",
                           borderRadius: "50%",
                           display: "flex",
                           alignItems: "center",
                           justifyContent: "center",
-                          fontSize: "8px",
                           border: "2px solid #14141a",
                         }}
                       >
-                        {notif.type === "like" ? "❤" : notif.type === "comment" ? "💬" : "👤"}
+                        {notif.type === "like" ? (
+                          <svg width="8" height="8" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" />
+                          </svg>
+                        ) : notif.type === "comment" ? (
+                          <svg width="8" height="8" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" />
+                          </svg>
+                        ) : (
+                          <svg width="8" height="8" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+                            <circle cx="12" cy="7" r="4" />
+                          </svg>
+                        )}
                       </div>
                     </div>
 
@@ -408,16 +421,30 @@ export default function Navbar({ onOpenSearch }) {
                         background: "transparent",
                         border: "none",
                         color: "#444",
-                        fontSize: "14px",
                         cursor: "pointer",
                         padding: "4px",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
                         transition: "0.2s",
                       }}
-                      onMouseEnter={(e) => (e.target.style.color = "#ff4757")}
-                      onMouseLeave={(e) => (e.target.style.color = "#444")}
+                      onMouseEnter={(e) => (e.currentTarget.style.color = "#ff4757")}
+                      onMouseLeave={(e) => (e.currentTarget.style.color = "#444")}
                       title="Delete"
                     >
-                      ✕
+                      <svg
+                        width="14"
+                        height="14"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2.2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      >
+                        <line x1="18" y1="6" x2="6" y2="18" />
+                        <line x1="6" y1="6" x2="18" y2="18" />
+                      </svg>
                     </button>
                   </div>
                 ))
@@ -426,7 +453,7 @@ export default function Navbar({ onOpenSearch }) {
           )}
         </div>
 
-        {/* 6. Profile Menu (Ab <button> hai, keyboard se khulega) */}
+        {/* 6. Profile Menu */}
         {userId && (
           <div style={{ position: "relative" }} ref={dropdownRef}>
             <button
@@ -465,7 +492,7 @@ export default function Navbar({ onOpenSearch }) {
             </button>
 
             {showDropdown && (
-              <div className="custom-dropdown" style={{ width: "200px" }}>
+              <div className="custom-dropdown" style={{ width: "210px" }}>
                 <div
                   style={{
                     padding: "12px 16px",
@@ -483,8 +510,22 @@ export default function Navbar({ onOpenSearch }) {
                     setIsMobileMenuOpen(false);
                   }}
                   className="dropdown-item"
+                  style={{ display: "flex", alignItems: "center", gap: "10px" }}
                 >
-                  👤 My Profile
+                  <svg
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+                    <circle cx="12" cy="7" r="4" />
+                  </svg>
+                  <span>My Profile</span>
                 </Link>
                 <Link
                   to="/monthly-review"
@@ -493,12 +534,46 @@ export default function Navbar({ onOpenSearch }) {
                     setIsMobileMenuOpen(false);
                   }}
                   className="dropdown-item"
+                  style={{ display: "flex", alignItems: "center", gap: "10px" }}
                 >
-                  📊 Monthly Analytics
+                  <svg
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <line x1="18" y1="20" x2="18" y2="10" />
+                    <line x1="12" y1="20" x2="12" y2="4" />
+                    <line x1="6" y1="20" x2="6" y2="14" />
+                  </svg>
+                  <span>Monthly Analytics</span>
                 </Link>
                 <div className="dropdown-divider"></div>
-                <button type="button" onClick={handleLogout} className="dropdown-item logout-btn">
-                  🚪 Log Out
+                <button
+                  type="button"
+                  onClick={handleLogout}
+                  className="dropdown-item logout-btn"
+                  style={{ display: "flex", alignItems: "center", gap: "10px" }}
+                >
+                  <svg
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+                    <polyline points="16 17 21 12 16 7" />
+                    <line x1="21" y1="12" x2="9" y2="12" />
+                  </svg>
+                  <span>Log Out</span>
                 </button>
               </div>
             )}

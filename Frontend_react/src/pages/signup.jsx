@@ -5,6 +5,49 @@ import { API_BASE_URL } from "../config/api";
 import PosterAnimation from "../components/PosterAnimation";
 import "../styles/signup.css";
 
+const UserIcon = () => (
+  <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+    <circle cx="12" cy="7" r="4" />
+  </svg>
+);
+
+const MailIcon = () => (
+  <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <rect x="2" y="4" width="20" height="16" rx="2" />
+    <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7" />
+  </svg>
+);
+
+const LockIcon = () => (
+  <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+    <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+  </svg>
+);
+
+const KeyIcon = () => (
+  <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <circle cx="7.5" cy="15.5" r="5.5" />
+    <path d="m21 2-9.6 9.6" />
+    <path d="m15.5 7.5 3 3L22 7l-3-3" />
+  </svg>
+);
+
+const EyeToggleIcon = ({ visible }) =>
+  visible ? (
+    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" />
+      <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" />
+      <line x1="1" y1="1" x2="23" y2="23" />
+    </svg>
+  ) : (
+    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+      <circle cx="12" cy="12" r="3" />
+    </svg>
+  );
+
 export default function Signup() {
   const navigate = useNavigate();
 
@@ -126,7 +169,9 @@ export default function Signup() {
               <div className="signup-input-group">
                 <label>Username</label>
                 <div className="signup-input-wrapper">
-                  <span className="signup-input-icon">👤</span>
+                  <span className="signup-input-icon" style={{ display: "inline-flex", alignItems: "center", justifyContent: "center" }}>
+                    <UserIcon />
+                  </span>
                   <input type="text" placeholder="Username" value={username} onChange={(e) => setUsername(e.target.value)} />
                 </div>
               </div>
@@ -134,7 +179,9 @@ export default function Signup() {
               <div className="signup-input-group">
                 <label>Email</label>
                 <div className="signup-input-wrapper">
-                  <span className="signup-input-icon">✉</span>
+                  <span className="signup-input-icon" style={{ display: "inline-flex", alignItems: "center", justifyContent: "center" }}>
+                    <MailIcon />
+                  </span>
                   <input type="email" placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} />
                 </div>
               </div>
@@ -142,10 +189,18 @@ export default function Signup() {
               <div className="signup-input-group">
                 <label>Password</label>
                 <div className="signup-input-wrapper">
-                  <span className="signup-input-icon">🔒</span>
+                  <span className="signup-input-icon" style={{ display: "inline-flex", alignItems: "center", justifyContent: "center" }}>
+                    <LockIcon />
+                  </span>
                   <input type={showPassword ? "text" : "password"} placeholder="Password" value={password} onChange={(e) => setPassword(e.target.value)} />
-                  <button type="button" className="signup-eye-button" onClick={() => setShowPassword(!showPassword)}>
-                    {showPassword ? "◉" : "◌"}
+                  <button
+                    type="button"
+                    className="signup-eye-button"
+                    aria-label={showPassword ? "Hide password" : "Show password"}
+                    onClick={() => setShowPassword(!showPassword)}
+                    style={{ display: "inline-flex", alignItems: "center", justifyContent: "center" }}
+                  >
+                    <EyeToggleIcon visible={showPassword} />
                   </button>
                 </div>
               </div>
@@ -153,10 +208,18 @@ export default function Signup() {
               <div className="signup-input-group">
                 <label>Confirm Password</label>
                 <div className="signup-input-wrapper">
-                  <span className="signup-input-icon">🔒</span>
+                  <span className="signup-input-icon" style={{ display: "inline-flex", alignItems: "center", justifyContent: "center" }}>
+                    <LockIcon />
+                  </span>
                   <input type={showConfirmPassword ? "text" : "password"} placeholder="Confirm Password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} />
-                  <button type="button" className="signup-eye-button" onClick={() => setShowConfirmPassword(!showConfirmPassword)}>
-                    {showConfirmPassword ? "◉" : "◌"}
+                  <button
+                    type="button"
+                    className="signup-eye-button"
+                    aria-label={showConfirmPassword ? "Hide confirm password" : "Show confirm password"}
+                    onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                    style={{ display: "inline-flex", alignItems: "center", justifyContent: "center" }}
+                  >
+                    <EyeToggleIcon visible={showConfirmPassword} />
                   </button>
                 </div>
               </div>
@@ -173,7 +236,9 @@ export default function Signup() {
               <div className="signup-input-group">
                 <label>Enter 6-Digit OTP</label>
                 <div className="signup-input-wrapper">
-                  <span className="signup-input-icon">🔑</span>
+                  <span className="signup-input-icon" style={{ display: "inline-flex", alignItems: "center", justifyContent: "center" }}>
+                    <KeyIcon />
+                  </span>
                   <input type="text" placeholder="e.g. 123456" value={otp} onChange={(e) => setOtp(e.target.value)} maxLength="6" />
                 </div>
               </div>

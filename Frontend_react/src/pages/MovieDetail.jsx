@@ -19,6 +19,48 @@ import Navbar from "../components/Navbar";
 import CinematicLoader from "../components/CinematicLoader";
 import "../styles/movieDetail.css";
 
+const CloseIcon = ({ size = 16 }) => (
+  <svg
+    width={size}
+    height={size}
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2.2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    aria-hidden="true"
+  >
+    <line x1="18" y1="6" x2="6" y2="18" />
+    <line x1="6" y1="6" x2="18" y2="18" />
+  </svg>
+);
+
+const StarSvg = ({ size = 14, half = false, idSuffix = "0" }) => {
+  if (half) {
+    const gradId = `half-star-grad-${idSuffix}`;
+    return (
+      <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
+        <defs>
+          <linearGradient id={gradId} x1="0%" y1="0%" x2="100%" y2="0%">
+            <stop offset="50%" stopColor="currentColor" />
+            <stop offset="50%" stopColor="rgba(255, 255, 255, 0.2)" />
+          </linearGradient>
+        </defs>
+        <polygon
+          fill={`url(#${gradId})`}
+          points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"
+        />
+      </svg>
+    );
+  }
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+    </svg>
+  );
+};
+
 export default function MovieDetail() {
   const { id } = useParams();
   const [movie, setMovie] = useState(null);
@@ -151,7 +193,7 @@ export default function MovieDetail() {
       message: sharePayload
     }, (response) => {
       if (response && response.success) {
-        setShareStatus({ type: "success", msg: "Sent to Chat! 🚀" });
+        setShareStatus({ type: "success", msg: "Sent to Chat!" });
         setTimeout(() => {
           tempSocket.disconnect();
           setShowShareModal(false);
@@ -259,11 +301,11 @@ export default function MovieDetail() {
   });
 
   if (loading) return <CinematicLoader />;
-  if (!movie) return <h1 style={{ color: "red", textAlign: "center", marginTop: "20%" }}>❌ Movie Not Found or API Failed!</h1>;
+  if (!movie) return <h1 style={{ color: "red", textAlign: "center", marginTop: "20%" }}>Movie Not Found or API Failed!</h1>;
 
   const avg = Number(movie.avg_rating) || 0;
 
-  // 🚀 RESTORED SMART BELL CURVE LOGIC (This makes the graph look amazing again)
+  // RESTORED SMART BELL CURVE LOGIC (This makes the graph look amazing again)
   const buildRatingDistribution = (avgScore, userReviews) => {
     if (!avgScore || avgScore <= 0) {
       return [5, 4, 3, 2, 1].map((s) => ({ stars: s, percentage: 0 }));
@@ -414,7 +456,15 @@ export default function MovieDetail() {
       {isTrailerOpen && trailerKey && (
         <div className="trailer-modal-overlay" onClick={() => { setIsTrailerOpen(false); setTrailerKey(null); }}>
           <div className="trailer-modal-content" onClick={(e) => e.stopPropagation()}>
-            <button className="close-trailer-btn" onClick={() => { setIsTrailerOpen(false); setTrailerKey(null); }}>✕</button>
+            <button
+              type="button"
+              aria-label="Close trailer"
+              className="close-trailer-btn"
+              onClick={() => { setIsTrailerOpen(false); setTrailerKey(null); }}
+              style={{ display: "inline-flex", alignItems: "center", justifyContent: "center" }}
+            >
+              <CloseIcon size={18} />
+            </button>
             <div className="video-responsive">
               <iframe
                 width="100%"
@@ -531,6 +581,8 @@ export default function MovieDetail() {
             <div className="reviews-list">
               {sortedReviews.slice(0, visibleReviews).map((review, index) => {
                 const isHiddenSpoiler = Boolean(review.is_spoiler) && !revealedSpoilers[review.review_id];
+                const fullStars = Math.floor(review.rating || 0);
+                const hasHalfStar = (review.rating || 0) % 1 !== 0;
 
                 return (
                   <div key={review.review_id} className="user-review-card">
@@ -538,9 +590,14 @@ export default function MovieDetail() {
                       <div className="ur-avatar">{getInitials(review.username)}</div>
                       <div className="ur-info">
                         <h4>{review.username}</h4>
-                        <span className="ur-stars" style={{ color: "#f5c518", fontSize: "14px", letterSpacing: "2px" }}>
-                          {"★".repeat(Math.floor(review.rating || 0))}
-                          {(review.rating || 0) % 1 !== 0 ? "½" : ""}
+                        <span
+                          className="ur-stars"
+                          style={{ color: "#f5c518", display: "inline-flex", alignItems: "center", gap: "2px" }}
+                        >
+                          {Array.from({ length: fullStars }).map((_, i) => (
+                            <StarSvg key={i} size={14} />
+                          ))}
+                          {hasHalfStar && <StarSvg size={14} half idSuffix={String(review.review_id)} />}
                         </span>
                       </div>
                     </div>
@@ -746,13 +803,21 @@ export default function MovieDetail() {
             <h3>Rating Distribution (Estimated)</h3>
             <div className="rating-graph-container">
               <div className="rg-avg-score">
-                <span className="rg-big-star">★</span>
+                <span className="rg-big-star" style={{ display: "inline-flex", alignItems: "center" }}>
+                  <StarSvg size={26} />
+                </span>
                 <h2>{avg > 0 ? avg.toFixed(2) : "0.00"}</h2>
               </div>
               <div className="rg-bars">
                 {ratingDistribution.map((item) => (
                   <div key={item.stars} className="rg-row">
-                    <span className="rg-star-label">{item.stars} ★</span>
+                    <span
+                      className="rg-star-label"
+                      style={{ display: "inline-flex", alignItems: "center", gap: "3px" }}
+                    >
+                      <span>{item.stars}</span>
+                      <StarSvg size={11} />
+                    </span>
                     <div className="rg-bar-bg">
                       <div className="rg-bar-fill" style={{ width: `${item.percentage}%` }}></div>
                     </div>
@@ -784,7 +849,12 @@ export default function MovieDetail() {
               <img src={rec.poster_url} alt={rec.title} />
               <div className="ml-poster-info">
                 <h4>{rec.title}</h4>
-                <span>⭐ {rec.avg_rating}</span>
+                <span style={{ display: "inline-flex", alignItems: "center", gap: "4px" }}>
+                  <span style={{ color: "#f5c518", display: "inline-flex", alignItems: "center" }}>
+                    <StarSvg size={13} />
+                  </span>
+                  <span>{rec.avg_rating}</span>
+                </span>
               </div>
             </Link>
           ))}
@@ -829,7 +899,15 @@ export default function MovieDetail() {
               </form>
             )}
 
-            <button className="close-modal-x" onClick={() => setShowColModal(false)}>✕</button>
+            <button
+              type="button"
+              aria-label="Close modal"
+              className="close-modal-x"
+              onClick={() => setShowColModal(false)}
+              style={{ display: "inline-flex", alignItems: "center", justifyContent: "center" }}
+            >
+              <CloseIcon size={16} />
+            </button>
           </div>
         </div>
       )}
@@ -923,7 +1001,15 @@ export default function MovieDetail() {
               </button>
             </div>
 
-            <button className="close-modal-x" onClick={() => setShowShareModal(false)}>✕</button>
+            <button
+              type="button"
+              aria-label="Close share modal"
+              className="close-modal-x"
+              onClick={() => setShowShareModal(false)}
+              style={{ display: "inline-flex", alignItems: "center", justifyContent: "center" }}
+            >
+              <CloseIcon size={16} />
+            </button>
           </div>
         </div>
       )}

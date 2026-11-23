@@ -1,7 +1,7 @@
 // File Path: Frontend_react/src/pages/Home.jsx
 import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { API_BASE_URL } from "../config/api"; // 🚀 FIX N4
+import { API_BASE_URL } from "../config/api";
 import MovieRow from "../components/MovieRow";
 import SearchModal from "../components/SearchModal"; 
 import Navbar from "../components/Navbar";
@@ -31,7 +31,7 @@ export default function Home() {
     const fetchHomeData = async () => {
       try {
         setLoading(true); 
-        const res = await fetch(`${API_BASE_URL}/home`, { // 🚀 FIX N4
+        const res = await fetch(`${API_BASE_URL}/home`, {
           method: "GET",
           cache: "no-store",
           headers: {
@@ -45,8 +45,8 @@ export default function Home() {
           const data = await res.json();
           setHomeData(data);
           
-          fetch(`${API_BASE_URL}/warmup`) // 🚀 FIX N4
-            .then(() => console.log("🔥 ML Models Warm-up Complete!"))
+          fetch(`${API_BASE_URL}/warmup`)
+            .then(() => console.log("ML Models Warm-up Complete!"))
             .catch((err) => console.log("Warmup failed", err));
 
         } else {
@@ -85,7 +85,7 @@ export default function Home() {
     if (!movieId) return;
     const success = await addToWatchlist(movieId);
     if (success) {
-      alert("Added to your watchlist successfully! 🔖");
+      alert("Added to your watchlist successfully!");
     } else {
       alert("Movie is already in your watchlist.");
     }
@@ -120,10 +120,38 @@ export default function Home() {
               <div className="hero-overlay"></div>
               <div className="hero-container">
                 <div className="hero-content" key={featured.movie_id}>
-                  <div className="hero-badge">🔥 Featured Release</div>
+                  <div
+                    className="hero-badge"
+                    style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}
+                  >
+                    <svg
+                      width="14"
+                      height="14"
+                      viewBox="0 0 24 24"
+                      fill="currentColor"
+                      aria-hidden="true"
+                    >
+                      <path d="M12 2c.5 3.5-1.5 5.5-3.5 7.5C6.5 11.5 5 13.5 5 16a7 7 0 0 0 14 0c0-3.5-2.5-6.5-4.5-8.5-.5 1.5-1.5 2.5-2.5 2.5 0-2.5 0-5.5 0-8z" />
+                    </svg>
+                    <span>Featured Release</span>
+                  </div>
                   <h1 className="hero-title">{featured.title}</h1>
                   <div className="hero-meta">
-                    <span className="rating">⭐ {featured.avg_rating ? Number(featured.avg_rating).toFixed(1) : "N/A"}</span>
+                    <span
+                      className="rating"
+                      style={{ display: "inline-flex", alignItems: "center", gap: "4px" }}
+                    >
+                      <svg
+                        width="14"
+                        height="14"
+                        viewBox="0 0 24 24"
+                        fill="currentColor"
+                        aria-hidden="true"
+                      >
+                        <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+                      </svg>
+                      {featured.avg_rating ? Number(featured.avg_rating).toFixed(1) : "N/A"}
+                    </span>
                     <span className="year">{featured.release_year || "Unknown"}</span>
                     <span className="quality">HD</span>
                   </div>
@@ -133,8 +161,23 @@ export default function Home() {
                       : "No description available for this movie."}
                   </p>
                   <div className="hero-actions">
-                    <Link to={`/movie/${featured.movie_id}`} className="btn-play" style={{ textDecoration: 'none', display: 'inline-block' }}>
-                      <span className="play-icon">▶</span> View Details
+                    <Link
+                      to={`/movie/${featured.movie_id}`}
+                      className="btn-play"
+                      style={{ textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "8px" }}
+                    >
+                      <span className="play-icon" style={{ display: "inline-flex", alignItems: "center" }}>
+                        <svg
+                          width="14"
+                          height="14"
+                          viewBox="0 0 24 24"
+                          fill="currentColor"
+                          aria-hidden="true"
+                        >
+                          <polygon points="6 3 20 12 6 21 6 3" />
+                        </svg>
+                      </span>
+                      <span>View Details</span>
                     </Link>
                     <button className="btn-watchlist" onClick={() => handleHeroWatchlist(featured.movie_id)}>
                       <span>+</span> Add to Watchlist
@@ -160,7 +203,7 @@ export default function Home() {
             <MovieRow title="NEW RELEASES" movies={homeData?.new_releases || []} seeMoreLink="/explore?sort_by=Newest" />
             
             {homeData?.hidden_gems?.length > 0 && (
-              <MovieRow title="💎 HIDDEN GEMS" movies={homeData.hidden_gems} seeMoreLink="/explore?sort_by=Top Rated" />
+              <MovieRow title="HIDDEN GEMS" movies={homeData.hidden_gems} seeMoreLink="/explore?sort_by=Top Rated" />
             )}
 
             <MovieRow title="RECOMMENDED FOR YOU" movies={homeData?.recommended_for_you || []} seeMoreLink="/explore" />

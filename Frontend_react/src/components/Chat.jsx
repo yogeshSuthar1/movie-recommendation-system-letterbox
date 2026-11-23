@@ -176,7 +176,7 @@ const Chat = () => {
       }
     });
 
-    // 🚀 NAYA: Typing Listeners
+    //  NAYA: Typing Listeners
     newSocket.on("friend_typing", (data) => {
       if (activeFriendRef.current && Number(data.sender_id) === Number(activeFriendRef.current.id)) {
         setIsFriendTyping(true);
@@ -405,7 +405,7 @@ const renderAvatar = (friendObj, className = "nexus-avatar") => {
                 messages.map((msg, idx) => {
                   const isMe = Number(msg.sender_id) === myUserId;
                   
-                  // 🚀 NAYA: Message Grouping Logic (Hide avatar and adjust margin if same sender)
+                  //  NAYA: Message Grouping Logic (Hide avatar and adjust margin if same sender)
                   const prevMsg = messages[idx - 1];
                   const isSameSenderAsPrev = prevMsg && Number(prevMsg.sender_id) === Number(msg.sender_id);
                   const nextMsg = messages[idx + 1];
@@ -479,7 +479,7 @@ const renderAvatar = (friendObj, className = "nexus-avatar") => {
                 })
               )}
               
-              {/* 🚀 NAYA: Typing Indicator UI */}
+              {/*  NAYA: Typing Indicator UI */}
               {isFriendTyping && (
                  <div className="msg-row msg-row-friend" style={{ marginTop: "14px" }}>
                    <div className="message-wrapper friend">
@@ -496,10 +496,11 @@ const renderAvatar = (friendObj, className = "nexus-avatar") => {
               <div ref={messagesEndRef} />
             </div>
 
-            {/* 🚀 NAYA: Scroll to bottom button */}
+            {/*  NAYA: Scroll to bottom button */}
             {showScrollBtn && (
               <button 
                 onClick={scrollToBottom}
+                aria-label="Scroll to bottom"
                 style={{
                   position: "absolute", bottom: "90px", right: "40px",
                   background: "var(--bg-secondary)", border: "1px solid var(--border-light)",
@@ -508,7 +509,19 @@ const renderAvatar = (friendObj, className = "nexus-avatar") => {
                   boxShadow: "0 4px 15px rgba(0,0,0,0.5)", zIndex: 10
                 }}
               >
-                ⬇️
+                <svg
+                  width="18"
+                  height="18"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2.2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <line x1="12" y1="5" x2="12" y2="19" />
+                  <polyline points="19 12 12 19 5 12" />
+                </svg>
               </button>
             )}
 
