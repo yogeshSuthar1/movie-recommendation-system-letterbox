@@ -278,7 +278,7 @@ export default function GenreSelection() {
 
       <div className="genre-container">
         <div className="genre-logo">
-          MOVIE<span>VERSE</span>
+          NEX<span>US</span>
         </div>
 
         <div className="genre-header">
@@ -295,7 +295,7 @@ export default function GenreSelection() {
             </svg>
           </div>
           <h1>Tell us what you love</h1>
-          <p>Choose a few genres you enjoy and we'll personalize your MovieVerse experience.</p>
+          <p>Choose a few genres you enjoy and we'll personalize your Nexus experience.</p>
         </div>
 
         <div className="selection-info">

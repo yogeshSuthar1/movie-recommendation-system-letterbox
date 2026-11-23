@@ -161,7 +161,7 @@ export default function Signup() {
         <div className="signup-card">
           <h1>{isOtpSent ? "Verify Email" : "Create Account"}</h1>
           <p className="signup-subtitle">
-            {isOtpSent ? "We've sent a 6-digit code to your email." : "Join MovieVerse and discover movies you'll love."}
+            {isOtpSent ? "We've sent a 6-digit code to your email." : "Join Nexus and discover movies you'll love."}
           </p>
 
           {!isOtpSent ? (

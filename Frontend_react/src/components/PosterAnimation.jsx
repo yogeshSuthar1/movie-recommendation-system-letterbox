@@ -83,7 +83,7 @@ export default function PosterAnimation() {
       {/* MovieVerse name */}
 
       <div className="movieverse-logo">
-        MovieVerse
+         Nexus 
       </div>
 
     </div>
