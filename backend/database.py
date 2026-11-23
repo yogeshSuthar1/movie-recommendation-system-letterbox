@@ -18,10 +18,13 @@ db_url = URL.create(
 
 connect_args = {}
 if os.getenv("DB_SSL", "false").lower() == "true":
-    ssl_ctx = ssl.create_default_context()
-    ssl_ctx.check_hostname = False
-    ssl_ctx.verify_mode = ssl.CERT_NONE
-    connect_args["ssl"] = ssl_ctx
+    if driver == "mysql+pymysql":
+        connect_args["ssl"] = {"check_hostname": False}
+    else:
+        ssl_ctx = ssl.create_default_context()
+        ssl_ctx.check_hostname = False
+        ssl_ctx.verify_mode = ssl.CERT_NONE
+        connect_args["ssl"] = ssl_ctx
 
 engine = create_engine(
     db_url,
