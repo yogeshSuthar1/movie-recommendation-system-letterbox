@@ -1,7 +1,8 @@
 # File Path: backend/routes/home.py
 import os
 import random
-import requests
+import json
+import urllib.parse
 from flask import Blueprint, jsonify, g, request, current_app
 from sqlalchemy import text, bindparam
 from dotenv import load_dotenv
@@ -258,9 +259,20 @@ def get_movie_trailer():
         "key": API_KEY
     }
 
+    full_url = f"{youtube_url}?{urllib.parse.urlencode(params)}"
+
     try:
-        response = requests.get(youtube_url, params=params, timeout=5)
-        data = response.json()
+        try:
+            import eventlet.patcher
+            urllib_req = eventlet.patcher.original("urllib.request")
+        except Exception:
+            import urllib.request as urllib_req
+
+        req = urllib_req.Request(full_url, method="GET")
+        with urllib_req.urlopen(req, timeout=8) as resp:
+            resp_text = resp.read().decode("utf-8")
+
+        data = json.loads(resp_text) if resp_text else {}
 
         if "items" in data and len(data["items"]) > 0:
             video_id = data["items"][0]["id"]["videoId"]
@@ -272,8 +284,6 @@ def get_movie_trailer():
     except Exception as e:
         current_app.logger.error(f"Trailer Error: {e}")
         return jsonify({"error": "Failed to fetch trailer"}), 500
-
-
 # =====================================================================
 # 💬 REVIEW COMMENTS & REVIEWS API
 # =====================================================================
