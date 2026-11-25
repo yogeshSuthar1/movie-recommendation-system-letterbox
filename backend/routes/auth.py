@@ -5,6 +5,7 @@ import bcrypt
 import jwt
 import os
 import requests
+import json
 from datetime import datetime, timedelta, timezone
 from flask import Blueprint, request, jsonify, g, current_app
 from flask_mail import Message
@@ -30,7 +31,66 @@ def generate_secure_otp():
     return raw_otp, hashed_otp, expires_at
 
 
-def send_otp_email(user_email, otp, subject="Your MovieVerse Verification Code"):
+def send_otp_email(user_email, otp, subject="Your NEXUS Verification Code"):
+    email_body = (
+        f"Welcome to NEXUS!\n\n"
+        f"Your 6-digit verification code is: {otp}\n"
+        f"This code expires in {OTP_EXPIRY_MINUTES} minutes.\n\n"
+        f"Please don't share this code with anyone."
+    )
+
+    # 1. Production (Google Apps Script via HTTPS)
+    script_url = os.getenv("EMAIL_SCRIPT_URL")
+    script_secret = os.getenv("EMAIL_SCRIPT_SECRET", "")
+
+    if script_url:
+        payload = json.dumps({
+            "secret": script_secret,
+            "to": user_email,
+            "subject": subject,
+            "body": email_body,
+        }).encode("utf-8")
+
+        try:
+            # Python 3.11 + eventlet SSL recursion bug se bachne ke liye unpatched urllib use karo
+            try:
+                import eventlet.patcher
+                urllib_req = eventlet.patcher.original("urllib.request")
+            except Exception:
+                import urllib.request as urllib_req
+
+            req = urllib_req.Request(
+                script_url,
+                data=payload,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib_req.urlopen(req, timeout=15) as resp:
+                status_code = resp.getcode()
+                resp_text = resp.read().decode("utf-8")
+
+            resp_data = json.loads(resp_text) if resp_text else {}
+            if status_code == 200 and resp_data.get("ok"):
+                return True
+            current_app.logger.error(f"Apps Script Mail Error: {status_code} {resp_text}")
+            return False
+        except Exception as e:
+            current_app.logger.error(f"Apps Script Request Error: {e}")
+            return False
+
+    # 2. Local Fallback (Purana Gmail SMTP)
+    try:
+        msg = Message(
+            subject,
+            sender=current_app.config["MAIL_USERNAME"],
+            recipients=[user_email],
+        )
+        msg.body = email_body
+        mail.send(msg)
+        return True
+    except Exception as e:
+        current_app.logger.error(f"Mail Error: {e}")
+        return False
     email_body = (
         f"Welcome to NEXUS! 🎬\n\n"
         f"Your 6-digit verification code is: {otp}\n"
@@ -150,7 +210,7 @@ def register():
             user_id = result.lastrowid
             target_email = email
 
-    email_sent = send_otp_email(target_email, raw_otp, "Verify your MovieVerse Account")
+    email_sent = send_otp_email(target_email, raw_otp, "Verify your Nexus Account")
 
     if email_sent:
         return jsonify({
@@ -221,7 +281,7 @@ def verify_otp():
             conn.execute(
                 text("""
                     INSERT INTO notifications (user_id, message, type) 
-                    VALUES (:uid, 'Welcome to MovieVerse! 🎬 Add your first movie to the watchlist.', 'welcome')
+                    VALUES (:uid, 'Welcome to Nexus! 🎬 Add your first movie to the watchlist.', 'welcome')
                 """),
                 {"uid": user["user_id"]}
             )
@@ -266,7 +326,7 @@ def resend_otp():
                 )
 
         if raw_otp:
-            send_otp_email(email, raw_otp, "MovieVerse - Your New Verification Code")
+            send_otp_email(email, raw_otp, "Nexus - Your New Verification Code")
 
         return jsonify({"message": generic_msg}), 200
     except Exception as e:
@@ -366,7 +426,7 @@ def forgot_password():
                 )
 
         if raw_otp:
-            send_otp_email(email, raw_otp, "MovieVerse - Password Reset Code")
+            send_otp_email(email, raw_otp, "Nexus - Password Reset Code")
 
         return jsonify({"message": "If this email is registered and verified, you will receive an OTP."}), 200
 
